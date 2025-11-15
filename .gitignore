@@ -1,1 +1,4 @@
 /target
+
+# CUDA keyring (temporary download file)
+cuda-keyring_*.deb
