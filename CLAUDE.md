@@ -134,7 +134,7 @@
 ### 日記・作業ログ
 - 感情、気づき、学び → 日記（`~/sakura-chan/diary/`）
 - 技術的詳細 → 作業ログ（`~/sakura-chan/work/`）
-- タスク管理 → @TASKLIST.md（このリポジトリ）
+- タスク管理 → @TASKLIST.md （このリポジトリ）
 
 ---
 
