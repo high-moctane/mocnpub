@@ -9,3 +9,5 @@ num-complex = "0.4"
 image = "0.25"
 secp256k1 = { version = "0.28", features = ["rand-std"] }
 rand = "0.8"
+bech32 = "0.11"
+hex = "0.4"
