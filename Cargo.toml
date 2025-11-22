@@ -12,5 +12,4 @@ rand = "0.8"
 bech32 = "0.11"
 hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
-rayon = "1.10"
 num_cpus = "1.16"
