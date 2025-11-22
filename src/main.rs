@@ -59,8 +59,63 @@ fn seckey_to_nsec(seckey: &SecretKey) -> String {
     encode::<Bech32>(hrp, &bytes).expect("failed to encode nsec")
 }
 
+/// prefix の妥当性を検証（bech32 の有効文字のみを許可）
+///
+/// bech32 で使用可能な文字: 023456789acdefghjklmnpqrstuvwxyz (32文字)
+/// 使用不可な文字: 1, b, i, o（混同を避けるため除外されている）
+///
+/// # Returns
+/// - Ok(()) : prefix が有効
+/// - Err(String) : エラーメッセージ
+fn validate_prefix(prefix: &str) -> Result<(), String> {
+    // bech32 の有効な文字セット（32文字）
+    const VALID_CHARS: &str = "023456789acdefghjklmnpqrstuvwxyz";
+
+    // 空文字チェック
+    if prefix.is_empty() {
+        return Err("Prefix cannot be empty".to_string());
+    }
+
+    // 各文字をチェック
+    for (i, ch) in prefix.chars().enumerate() {
+        // 大文字をチェック
+        if ch.is_uppercase() {
+            return Err(format!(
+                "Invalid prefix '{}': bech32 does not allow uppercase letters (found '{}' at position {})\n\
+                 Hint: Use lowercase instead",
+                prefix, ch, i
+            ));
+        }
+
+        // bech32 で無効な文字をチェック
+        if !VALID_CHARS.contains(ch) {
+            // 特に混同しやすい文字には詳しい説明を追加
+            let hint = match ch {
+                '1' => "Character '1' is not allowed (reserved as separator in bech32)",
+                'b' | 'i' | 'o' => "Character is excluded to avoid confusion with similar-looking characters",
+                _ => "Character is not in the bech32 character set",
+            };
+
+            return Err(format!(
+                "Invalid prefix '{}': bech32 does not allow '{}'\n\
+                 {}\n\
+                 Valid characters: {}",
+                prefix, ch, hint, VALID_CHARS
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    // prefix の妥当性を検証
+    if let Err(err_msg) = validate_prefix(&args.prefix) {
+        eprintln!("❌ Error: {}", err_msg);
+        std::process::exit(1);
+    }
 
     // スレッド数を決定（引数指定 or CPU コア数）
     let num_threads = args.threads.unwrap_or_else(num_cpus::get);
