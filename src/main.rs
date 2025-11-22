@@ -5,6 +5,7 @@ use bech32::{encode, Bech32, Hrp};
 use hex;
 use std::fs::File;
 use std::io::{self, Write};
+use std::time::Instant;
 
 /// Nostr npub マイニングツール 🔑
 ///
@@ -60,6 +61,7 @@ fn main() -> io::Result<()> {
 
     let secp = Secp256k1::new();
     let mut count = 0;
+    let start = Instant::now();
 
     loop {
         let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
@@ -72,6 +74,10 @@ fn main() -> io::Result<()> {
 
         // prefix マッチング判定（npub の bech32 部分で比較）
         if npub_body.starts_with(&args.prefix) {
+            let elapsed = start.elapsed();
+            let elapsed_secs = elapsed.as_secs_f64();
+            let keys_per_sec = count as f64 / elapsed_secs;
+
             let nsec = seckey_to_nsec(&sk);
             let pk_hex = pk.to_string();
             let pk_x_only = &pk_hex[2..]; // x座標のみ（圧縮形式の先頭2文字を除去）
@@ -79,12 +85,16 @@ fn main() -> io::Result<()> {
             // 結果を整形
             let output_text = format!(
                 "✅ 見つかりました！（{}回試行）\n\n\
+                 経過時間: {:.2}秒\n\
+                 パフォーマンス: {:.2} keys/sec\n\n\
                  秘密鍵（hex）: {}\n\
                  秘密鍵（nsec）: {}\n\
                  公開鍵（圧縮形式）: {}\n\
                  公開鍵（x座標のみ）: {}\n\
                  公開鍵（npub）: {}\n",
                 count,
+                elapsed_secs,
+                keys_per_sec,
                 sk.display_secret(),
                 nsec,
                 pk,
