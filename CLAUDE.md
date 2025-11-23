@@ -224,7 +224,7 @@ GPU 版に移行する前に、CPU 版を実用レベルまでブラッシュア
 - 継続モード（3個で終了）: ✅
 - append モード（同じファイルに追記）: ✅
 
-#### 3. 複数 prefix の OR 指定 🎯
+#### 3. 複数 prefix の OR 指定 🎯 ✅ **完了！**（2025-11-23）
 
 **目的**：複数の prefix の組み合わせを探す
 
@@ -235,17 +235,29 @@ GPU 版に移行する前に、CPU 版を実用レベルまでブラッシュア
 
 **例**：
 ```bash
-# m0ctane0, m0ctane2, m0ctane3, m0ctane4 のいずれかにマッチ
-./mocnpub-main --prefix m0ctane0,m0ctane2,m0ctane3,m0ctane4
+# 単一 prefix
+./mocnpub-main --prefix "test"
+
+# 複数 prefix（OR 指定）
+./mocnpub-main --prefix "0,2,5"
+./mocnpub-main --prefix "m0ctane0,m0ctane2,m0ctane3,m0ctane4"
 ```
 
-**実装方針**：
-- **シンプルな Vec<String> で実装**（最初のバージョン）
-  - 各 prefix に対して `starts_with` でチェック
-  - prefix が数個〜数十個程度なら十分速い
-- **将来的な最適化**（必要になったら）：
-  - trie 構造で共通 prefix を共有
-  - prefix が数百個になったら検討
+**実装の詳細**：
+- **prefix を split して Vec<String> に変換**（trim で空白除去）
+- **Arc<Vec<String>> でスレッド間共有**
+- **iter().find() でマッチング判定**
+  - どれか1つにマッチすれば OK
+  - matched_prefix を channel で送信
+- **各 prefix に対して入力検証**
+  - bech32 無効文字を検出
+- **出力に「マッチした prefix」を表示**
+
+**テスト結果**：
+- ✅ 単一 prefix（既存の動作）
+- ✅ 複数 prefix の OR 指定（"0,2,5" で3種類にマッチ）
+- ✅ 入力検証（無効な文字 'b' を検出）
+- ✅ trim() 動作（空白を正しく除去）
 
 #### 4. 入力検証 🛡️
 
@@ -306,22 +318,24 @@ Valid characters: 023456789acdefghjklmnpqrstuvwxyz
    - bech32 無効文字（1, b, i, o）を検出
    - ユーザーフレンドリーなエラーメッセージ
 
-**Phase 2（中優先度）**：
-3. **テストコード** 🧪 ✅ **完了！**（2025-11-23）
+**Phase 2（中優先度）** ✅ **完了！**（2025-11-23）：
+3. **テストコード** 🧪 ✅ **完了！**（2025-11-23 00:00〜00:11）
    - 7つのテストケースを実装（全てパス）
    - `validate_prefix()` のテスト（有効/無効文字/大文字/空文字/エラーメッセージ）
    - `pubkey_to_npub()` のテスト（bech32 変換の正確性）
    - `seckey_to_nsec()` のテスト（bech32 変換の正確性）
    - Rust のテスト文化：同じファイルに `#[cfg(test)]` モジュールを書くのが一般的
-4. **継続モード** 💪 ✅ **完了！**（2025-11-23）
+4. **継続モード** 💪 ✅ **完了！**（2025-11-23 00:18〜00:28）
    - `--limit <N>` オプション（0 = 無限、デフォルト: 1）
    - std::sync::mpsc で channel を使用（標準ライブラリのみ）
    - 見つかるたびに channel 経由で送信・即座に出力
    - OpenOptions::new().append(true) でファイル追記
    - 停電で PC が落ちても、それまでの結果が残る 🛡️
-5. **複数 prefix の OR 指定** 🎯 **← 次はこれ！**
-   - rana の仕様を参考に
-   - シンプルな Vec で実装
+5. **複数 prefix の OR 指定** 🎯 ✅ **完了！**（2025-11-23 11:06〜11:13）
+   - カンマ区切りで複数 prefix を指定可能
+   - Vec<String> でシンプルに実装
+   - iter().find() でマッチング判定
+   - 出力に「マッチした prefix」を表示
 
 **Phase 3（低優先度）**：
 6. **ベンチマーク** 📊
