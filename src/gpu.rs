@@ -367,6 +367,19 @@ mod tests {
     }
 
     #[test]
+    fn test_gpu_mod_inv_one() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: inv(1) = 1 mod p
+        let a = [1u64, 0, 0, 0];
+        let inv_a = test_mod_inv_gpu(&ctx, &a).expect("GPU modular inverse failed");
+
+        println!("inv(1) = {:?}", inv_a);
+        assert_eq!(inv_a, [1u64, 0, 0, 0], "inv(1) should equal 1");
+    }
+
+    #[test]
     fn test_gpu_mod_inv_simple() {
         // Initialize GPU
         let ctx = init_gpu().expect("Failed to initialize GPU");
@@ -378,11 +391,38 @@ mod tests {
 
         println!("inv(2) = {:?}", inv_a);
 
+        // Expected value: 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7FFFFE18
+        let expected = [0xFFFFFFFF7FFFFE18u64, 0xFFFFFFFFFFFFFFFFu64, 0xFFFFFFFFFFFFFFFFu64, 0x7FFFFFFFFFFFFFFFu64];
+        println!("Expected: {:?}", expected);
+
         // Verify: 2 * inv(2) ≡ 1 (mod p)
         let product = test_mod_mult_gpu(&ctx, &a, &inv_a).expect("GPU multiplication failed");
         println!("2 * inv(2) = {:?}", product);
 
         assert_eq!(product, [1u64, 0, 0, 0], "2 * inv(2) should equal 1");
+    }
+
+    #[test]
+    fn test_gpu_mod_inv_three() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: inv(3) mod p
+        // We verify: 3 * inv(3) ≡ 1 (mod p)
+        let a = [3u64, 0, 0, 0];
+        let inv_a = test_mod_inv_gpu(&ctx, &a).expect("GPU modular inverse failed");
+
+        println!("inv(3) = {:?}", inv_a);
+
+        // Expected value: 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9FFFFFD75
+        let expected = [0xAAAAAAA9FFFFFD75u64, 0xAAAAAAAAAAAAAAAAu64, 0xAAAAAAAAAAAAAAAAu64, 0xAAAAAAAAAAAAAAAAu64];
+        println!("Expected: {:?}", expected);
+
+        // Verify: 3 * inv(3) ≡ 1 (mod p)
+        let product = test_mod_mult_gpu(&ctx, &a, &inv_a).expect("GPU multiplication failed");
+        println!("3 * inv(3) = {:?}", product);
+
+        assert_eq!(product, [1u64, 0, 0, 0], "3 * inv(3) should equal 1");
     }
 
     #[test]
@@ -396,6 +436,21 @@ mod tests {
 
         println!("2^2 = {:?}", result);
         assert_eq!(result, [4u64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_gpu_mod_square_2_128() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: (2^128)^2 = 2^256 mod p = 2^32 + 977 = 0x1000003D1
+        // 2^128 is represented as [0, 0, 1, 0] (little-endian)
+        let a = [0u64, 0, 1, 0];
+        let result = test_mod_square_gpu(&ctx, &a).expect("GPU modular squaring failed");
+
+        println!("(2^128)^2 = {:?}", result);
+        println!("Expected: [0x1000003D1, 0, 0, 0] = [{}, 0, 0, 0]", 0x1000003D1u64);
+        assert_eq!(result, [0x1000003D1u64, 0, 0, 0]);
     }
 
     #[test]
