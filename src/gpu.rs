@@ -511,4 +511,68 @@ mod tests {
         assert_eq!(result_x, expected_2Gx, "2G x-coordinate mismatch");
         assert_eq!(result_y, expected_2Gy, "2G y-coordinate mismatch");
     }
+
+    #[test]
+    fn test_gpu_reduce512_step10() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+        let stream = ctx.default_stream();
+
+        // Load PTX module
+        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
+        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+
+        // Step 10^2 の 512-bit 値（Python で計算した値）
+        let input_512: Vec<u64> = vec![
+            11103428889520133265u64,
+            5940767142678773938u64,
+            1566361556954594741u64,
+            1064932884789884258u64,
+            2383589971959567377u64,
+            14188426789726178142u64,
+            5880906690406353497u64,
+            15272488u64,
+        ];
+
+        // 期待値：Step 10^2 mod p
+        let expected: Vec<u64> = vec![
+            4111909762576034162u64,
+            12458353550763596130u64,
+            10194722910089095499u64,
+            1130527737568913083u64,
+        ];
+
+        // Allocate device memory
+        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
+        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+
+        // Copy input to device
+        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+
+        // Launch configuration
+        let config = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        // Launch kernel
+        let mut builder = stream.launch_builder(&kernel);
+        builder.arg(&mut input_dev);
+        builder.arg(&mut output_dev);
+        unsafe {
+            builder.launch(config).expect("Failed to launch kernel");
+        }
+
+        // Copy result back to host
+        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+
+        println!("Step 10^2 (512-bit) reduction test:");
+        println!("Result:   {:?}", result_vec);
+        println!("Expected: {:?}", expected);
+
+        // Check result
+        assert_eq!(result_vec, expected, "Step 10^2 reduction mismatch");
+    }
 }

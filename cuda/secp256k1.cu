@@ -230,22 +230,31 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
         uint64_t mult_low, mult_high;
         _Mult64(factor, 977, &mult_low, &mult_high);
 
-        // Add shifted + mult to sum[0..3]
+        // Add (shifted_low + mult_low) to sum[0], (shifted_high + mult_high) to sum[1]
+        // This implements: sum[4] * (2^32 + 977) = (shifted_low + mult_low) + ((shifted_high + mult_high) << 64)
         uint64_t carry2 = 0;
 
-        // Add shifted_low to sum[0]
-        uint64_t s0 = sum[0] + shifted_low + carry2;
+        // Add shifted_low + mult_low to sum[0]
+        uint64_t add0 = shifted_low + mult_low;
+        uint64_t carry0 = (add0 < shifted_low) ? 1 : 0;
+
+        uint64_t s0 = sum[0] + add0;
         carry2 = (s0 < sum[0]) ? 1 : 0;
+        carry2 += carry0;
         sum[0] = s0;
 
-        // Add shifted_high + mult_low to sum[1]
-        uint64_t s1 = sum[1] + shifted_high + mult_low + carry2;
-        carry2 = (s1 < sum[1]) ? 1 : 0;
-        if (shifted_high + mult_low > s1) carry2 = 1;
+        // Add shifted_high + mult_high + carry to sum[1]
+        uint64_t add1 = shifted_high + mult_high;
+        uint64_t carry1 = (add1 < shifted_high) ? 1 : 0;
+
+        uint64_t s1 = sum[1] + add1 + carry2;
+        uint64_t new_carry = (s1 < sum[1]) ? 1 : 0;
+        if (add1 + carry2 < add1) new_carry = 1;
+        carry2 = new_carry + carry1;
         sum[1] = s1;
 
-        // Add mult_high to sum[2]
-        uint64_t s2 = sum[2] + mult_high + carry2;
+        // Propagate carry to sum[2]
+        uint64_t s2 = sum[2] + carry2;
         carry2 = (s2 < sum[2]) ? 1 : 0;
         sum[2] = s2;
 
@@ -273,9 +282,15 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
 
     carry = 0;
     for (int i = 0; i < 5; i++) {
-        uint64_t s = temp[i] + sum[i] + carry;
-        carry = (s < temp[i]) ? 1 : 0;
-        temp[i] = s;
+        // Two-stage addition to properly detect carry
+        uint64_t s1 = temp[i] + sum[i];
+        uint64_t carry1 = (s1 < temp[i]) ? 1 : 0;
+
+        uint64_t s2 = s1 + carry;
+        uint64_t carry2 = (s2 < s1) ? 1 : 0;
+
+        temp[i] = s2;
+        carry = carry1 | carry2;
     }
 
     if (is_step7_case) {
@@ -346,12 +361,15 @@ __device__ void _ModMult(const uint64_t a[4], const uint64_t b[4], uint64_t resu
             uint64_t low, high;
             _Mult64(a[i], b[j], &low, &high);
 
-            // Add to temp[i+j]
-            uint64_t sum = temp[i + j] + low + carry;
-            carry = (sum < temp[i + j]) ? 1 : 0;
-            carry += high;
+            // Add to temp[i+j] with proper carry detection (two-stage)
+            uint64_t s1 = temp[i + j] + low;
+            uint64_t carry1 = (s1 < temp[i + j]) ? 1 : 0;
 
-            temp[i + j] = sum;
+            uint64_t s2 = s1 + carry;
+            uint64_t carry2 = (s2 < s1) ? 1 : 0;
+
+            temp[i + j] = s2;
+            carry = high + carry1 + carry2;
         }
         temp[i + 4] += carry;
     }
@@ -775,5 +793,37 @@ extern "C" __global__ void test_point_double(
     for (int i = 0; i < 4; i++) {
         output_x[i] = x[i];
         output_y[i] = y[i];
+    }
+}
+
+/**
+ * Test kernel: Direct _Reduce512 test
+ * Input: 512-bit number (8 limbs)
+ * Output: result mod p (4 limbs)
+ */
+extern "C" __global__ void test_reduce512(
+    const uint64_t* input_512,  // [8] 512-bit input
+    uint64_t* output_256        // [4] 256-bit output
+)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Only process first thread (simple test)
+    if (idx != 0) return;
+
+    uint64_t in[8];
+    uint64_t result[4];
+
+    // Load input
+    for (int i = 0; i < 8; i++) {
+        in[i] = input_512[i];
+    }
+
+    // Perform reduction
+    _Reduce512(in, result);
+
+    // Store result
+    for (int i = 0; i < 4; i++) {
+        output_256[i] = result[i];
     }
 }
