@@ -467,6 +467,24 @@ mod tests {
     }
 
     #[test]
+    fn test_gpu_mod_square_step254() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: Step 254 value squared
+        // This is the special case that causes the bug in _ModInv
+        // Step 254 = [18446744071562067480, 18446744073709551615, 18446744073709551615, 9223372036854775807]
+        // Expected: Step 254^2 = [18446744072635809548, 18446744073709551615, 18446744073709551615, 4611686018427387903]
+        let a = [18446744071562067480u64, 18446744073709551615, 18446744073709551615, 9223372036854775807];
+        let result = test_mod_square_gpu(&ctx, &a).expect("GPU modular squaring failed");
+
+        println!("Step 254^2 = {:?}", result);
+        let expected = [18446744072635809548u64, 18446744073709551615, 18446744073709551615, 4611686018427387903];
+        println!("Expected:    {:?}", expected);
+        assert_eq!(result, expected, "Step 254 squared should match Python simulation");
+    }
+
+    #[test]
     fn test_gpu_point_double() {
         // Initialize GPU
         let ctx = init_gpu().expect("Failed to initialize GPU");
@@ -510,6 +528,186 @@ mod tests {
         // Check result
         assert_eq!(result_x, expected_2Gx, "2G x-coordinate mismatch");
         assert_eq!(result_y, expected_2Gy, "2G y-coordinate mismatch");
+    }
+
+    #[test]
+    fn test_gpu_reduce512_p_plus_1() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+        let stream = ctx.default_stream();
+
+        // Load PTX module
+        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
+        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+
+        // Test case: p + 1
+        // Input: [18446744069414583344, 18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 0, 0, 0]
+        // Expected: [1, 0, 0, 0]
+        let input_512: Vec<u64> = vec![
+            18446744069414583344u64,
+            18446744073709551615u64,
+            18446744073709551615u64,
+            18446744073709551615u64,
+            0u64,
+            0u64,
+            0u64,
+            0u64,
+        ];
+
+        let expected: Vec<u64> = vec![1u64, 0, 0, 0];
+
+        // Allocate device memory
+        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
+        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+
+        // Copy input to device
+        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+
+        // Launch configuration
+        let config = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        // Launch kernel
+        let mut builder = stream.launch_builder(&kernel);
+        builder.arg(&mut input_dev);
+        builder.arg(&mut output_dev);
+        unsafe {
+            builder.launch(config).expect("Failed to launch kernel");
+        }
+
+        // Copy result back to host
+        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+
+        println!("(p + 1) mod p test:");
+        println!("Result:   {:?}", result_vec);
+        println!("Expected: {:?}", expected);
+
+        // Check result
+        assert_eq!(result_vec, expected, "(p + 1) mod p should equal 1");
+    }
+
+    #[test]
+    fn test_gpu_reduce512_p_plus_2() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+        let stream = ctx.default_stream();
+
+        // Load PTX module
+        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
+        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+
+        // Test case: p + 2
+        // Input: [18446744069414583345, 18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 0, 0, 0]
+        // Expected: [2, 0, 0, 0]
+        let input_512: Vec<u64> = vec![
+            18446744069414583345u64,
+            18446744073709551615u64,
+            18446744073709551615u64,
+            18446744073709551615u64,
+            0u64,
+            0u64,
+            0u64,
+            0u64,
+        ];
+
+        let expected: Vec<u64> = vec![2u64, 0, 0, 0];
+
+        // Allocate device memory
+        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
+        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+
+        // Copy input to device
+        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+
+        // Launch configuration
+        let config = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        // Launch kernel
+        let mut builder = stream.launch_builder(&kernel);
+        builder.arg(&mut input_dev);
+        builder.arg(&mut output_dev);
+        unsafe {
+            builder.launch(config).expect("Failed to launch kernel");
+        }
+
+        // Copy result back to host
+        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+
+        println!("(p + 2) mod p test:");
+        println!("Result:   {:?}", result_vec);
+        println!("Expected: {:?}", expected);
+
+        // Check result
+        assert_eq!(result_vec, expected, "(p + 2) mod p should equal 2");
+    }
+
+    #[test]
+    fn test_gpu_reduce512_2p() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+        let stream = ctx.default_stream();
+
+        // Load PTX module
+        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
+        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+
+        // Test case: 2 * p
+        // Input: [18446744065119615070, 18446744073709551615, 18446744073709551615, 18446744073709551615, 1, 0, 0, 0]
+        // Expected: [0, 0, 0, 0]
+        let input_512: Vec<u64> = vec![
+            18446744065119615070u64,
+            18446744073709551615u64,
+            18446744073709551615u64,
+            18446744073709551615u64,
+            1u64,
+            0u64,
+            0u64,
+            0u64,
+        ];
+
+        let expected: Vec<u64> = vec![0u64, 0, 0, 0];
+
+        // Allocate device memory
+        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
+        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+
+        // Copy input to device
+        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+
+        // Launch configuration
+        let config = LaunchConfig {
+            grid_dim: (1, 1, 1),
+            block_dim: (1, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        // Launch kernel
+        let mut builder = stream.launch_builder(&kernel);
+        builder.arg(&mut input_dev);
+        builder.arg(&mut output_dev);
+        unsafe {
+            builder.launch(config).expect("Failed to launch kernel");
+        }
+
+        // Copy result back to host
+        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+
+        println!("(2 * p) mod p test:");
+        println!("Result:   {:?}", result_vec);
+        println!("Expected: {:?}", expected);
+
+        // Check result
+        assert_eq!(result_vec, expected, "(2 * p) mod p should equal 0");
     }
 
     #[test]
