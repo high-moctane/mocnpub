@@ -70,6 +70,227 @@ pub fn test_mod_add_gpu(
     Ok(result)
 }
 
+/// Test modular multiplication on GPU
+///
+/// This function tests the _ModMult function by multiplying two 256-bit numbers modulo p
+pub fn test_mod_mult_gpu(
+    ctx: &Arc<CudaContext>,
+    a: &[u64; 4],
+    b: &[u64; 4],
+) -> Result<[u64; 4], Box<dyn std::error::Error>> {
+    // Get default stream
+    let stream = ctx.default_stream();
+
+    // Load PTX module
+    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let module = ctx.load_module(Ptx::from_src(ptx_code))?;
+    let kernel = module.load_function("test_mod_mult")?;
+
+    // Prepare input data (flatten to Vec<u64>)
+    let input_a: Vec<u64> = a.to_vec();
+    let input_b: Vec<u64> = b.to_vec();
+
+    // Allocate device memory (using alloc_zeros to avoid unsafe)
+    let mut a_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut b_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut output_dev = stream.alloc_zeros::<u64>(4)?;
+
+    // Copy input data to device
+    stream.memcpy_htod(&input_a, &mut a_dev)?;
+    stream.memcpy_htod(&input_b, &mut b_dev)?;
+
+    // Launch configuration: 1 block, 1 thread (for single test)
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // Launch kernel
+    let mut builder = stream.launch_builder(&kernel);
+    builder.arg(&mut a_dev);
+    builder.arg(&mut b_dev);
+    builder.arg(&mut output_dev);
+    unsafe {
+        builder.launch(config)?;
+    }
+
+    // Copy result back to host
+    let result_vec = stream.memcpy_dtov(&output_dev)?;
+
+    // Convert to fixed-size array
+    let mut result = [0u64; 4];
+    result.copy_from_slice(&result_vec);
+
+    Ok(result)
+}
+
+/// Test modular inverse on GPU
+///
+/// This function tests the _ModInv function by computing a^(-1) mod p
+pub fn test_mod_inv_gpu(
+    ctx: &Arc<CudaContext>,
+    a: &[u64; 4],
+) -> Result<[u64; 4], Box<dyn std::error::Error>> {
+    // Get default stream
+    let stream = ctx.default_stream();
+
+    // Load PTX module
+    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let module = ctx.load_module(Ptx::from_src(ptx_code))?;
+    let kernel = module.load_function("test_mod_inv")?;
+
+    // Prepare input data
+    let input_a: Vec<u64> = a.to_vec();
+
+    // Allocate device memory
+    let mut a_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut output_dev = stream.alloc_zeros::<u64>(4)?;
+
+    // Copy input data to device
+    stream.memcpy_htod(&input_a, &mut a_dev)?;
+
+    // Launch configuration: 1 block, 1 thread
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // Launch kernel
+    let mut builder = stream.launch_builder(&kernel);
+    builder.arg(&mut a_dev);
+    builder.arg(&mut output_dev);
+    unsafe {
+        builder.launch(config)?;
+    }
+
+    // Copy result back to host
+    let result_vec = stream.memcpy_dtov(&output_dev)?;
+
+    // Convert to fixed-size array
+    let mut result = [0u64; 4];
+    result.copy_from_slice(&result_vec);
+
+    Ok(result)
+}
+
+/// Test modular squaring on GPU
+///
+/// This function tests the _ModSquare function by computing a^2 mod p
+pub fn test_mod_square_gpu(
+    ctx: &Arc<CudaContext>,
+    a: &[u64; 4],
+) -> Result<[u64; 4], Box<dyn std::error::Error>> {
+    // Get default stream
+    let stream = ctx.default_stream();
+
+    // Load PTX module
+    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let module = ctx.load_module(Ptx::from_src(ptx_code))?;
+    let kernel = module.load_function("test_mod_square")?;
+
+    // Prepare input data
+    let input_a: Vec<u64> = a.to_vec();
+
+    // Allocate device memory
+    let mut a_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut output_dev = stream.alloc_zeros::<u64>(4)?;
+
+    // Copy input data to device
+    stream.memcpy_htod(&input_a, &mut a_dev)?;
+
+    // Launch configuration: 1 block, 1 thread
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // Launch kernel
+    let mut builder = stream.launch_builder(&kernel);
+    builder.arg(&mut a_dev);
+    builder.arg(&mut output_dev);
+    unsafe {
+        builder.launch(config)?;
+    }
+
+    // Copy result back to host
+    let result_vec = stream.memcpy_dtov(&output_dev)?;
+
+    // Convert to fixed-size array
+    let mut result = [0u64; 4];
+    result.copy_from_slice(&result_vec);
+
+    Ok(result)
+}
+
+/// Test point doubling on GPU
+///
+/// This function tests the _PointDouble function by doubling a point on the secp256k1 curve
+/// Input: Point in Affine coordinates (x, y)
+/// Output: 2*Point in Affine coordinates (x, y)
+pub fn test_point_double_gpu(
+    ctx: &Arc<CudaContext>,
+    x: &[u64; 4],
+    y: &[u64; 4],
+) -> Result<([u64; 4], [u64; 4]), Box<dyn std::error::Error>> {
+    // Get default stream
+    let stream = ctx.default_stream();
+
+    // Load PTX module
+    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let module = ctx.load_module(Ptx::from_src(ptx_code))?;
+    let kernel = module.load_function("test_point_double")?;
+
+    // Convert Affine to Jacobian: (x, y) -> (x, y, 1)
+    let input_X: Vec<u64> = x.to_vec();
+    let input_Y: Vec<u64> = y.to_vec();
+    let input_Z: Vec<u64> = vec![1, 0, 0, 0];
+
+    // Allocate device memory
+    let mut X_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut Y_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut Z_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut output_x_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut output_y_dev = stream.alloc_zeros::<u64>(4)?;
+
+    // Copy input data to device
+    stream.memcpy_htod(&input_X, &mut X_dev)?;
+    stream.memcpy_htod(&input_Y, &mut Y_dev)?;
+    stream.memcpy_htod(&input_Z, &mut Z_dev)?;
+
+    // Launch configuration: 1 block, 1 thread (for single test)
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // Launch kernel
+    let mut builder = stream.launch_builder(&kernel);
+    builder.arg(&mut X_dev);
+    builder.arg(&mut Y_dev);
+    builder.arg(&mut Z_dev);
+    builder.arg(&mut output_x_dev);
+    builder.arg(&mut output_y_dev);
+    unsafe {
+        builder.launch(config)?;
+    }
+
+    // Copy result back to host
+    let result_x_vec = stream.memcpy_dtov(&output_x_dev)?;
+    let result_y_vec = stream.memcpy_dtov(&output_y_dev)?;
+
+    // Convert to fixed-size arrays
+    let mut result_x = [0u64; 4];
+    let mut result_y = [0u64; 4];
+    result_x.copy_from_slice(&result_x_vec);
+    result_y.copy_from_slice(&result_y_vec);
+
+    Ok((result_x, result_y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +329,131 @@ mod tests {
 
         // Expected: 1 (since (p - 1) + 2 ≡ 1 (mod p))
         assert_eq!(result, [1u64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_gpu_mod_mult_simple() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: 2 * 3 = 6 (mod p)
+        let a = [2u64, 0, 0, 0];
+        let b = [3u64, 0, 0, 0];
+
+        let result = test_mod_mult_gpu(&ctx, &a, &b).expect("GPU kernel failed");
+
+        // Expected: [6, 0, 0, 0]
+        println!("2 * 3 = {:?}", result);
+        assert_eq!(result, [6u64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_gpu_mod_mult_large() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: 2^128 * 2^128 = 2^256 mod p = 2^32 + 977
+        // a = 2^128 = [0, 0, 1, 0]
+        // b = 2^128 = [0, 0, 1, 0]
+        let a = [0u64, 0, 1, 0];
+        let b = [0u64, 0, 1, 0];
+
+        let result = test_mod_mult_gpu(&ctx, &a, &b).expect("GPU kernel failed");
+
+        // Expected: 2^32 + 977 = 0x1000003D1 = [0x1000003D1, 0, 0, 0]
+        println!("2^128 * 2^128 mod p = {:?}", result);
+        println!("Expected: [0x1000003D1, 0, 0, 0] = [{}, 0, 0, 0]", 0x1000003D1u64);
+        assert_eq!(result, [0x1000003D1u64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_gpu_mod_inv_simple() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: inv(2) mod p
+        // We verify: 2 * inv(2) ≡ 1 (mod p)
+        let a = [2u64, 0, 0, 0];
+        let inv_a = test_mod_inv_gpu(&ctx, &a).expect("GPU modular inverse failed");
+
+        println!("inv(2) = {:?}", inv_a);
+
+        // Verify: 2 * inv(2) ≡ 1 (mod p)
+        let product = test_mod_mult_gpu(&ctx, &a, &inv_a).expect("GPU multiplication failed");
+        println!("2 * inv(2) = {:?}", product);
+
+        assert_eq!(product, [1u64, 0, 0, 0], "2 * inv(2) should equal 1");
+    }
+
+    #[test]
+    fn test_gpu_mod_square_simple() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: 2^2 = 4 (mod p)
+        let a = [2u64, 0, 0, 0];
+        let result = test_mod_square_gpu(&ctx, &a).expect("GPU modular squaring failed");
+
+        println!("2^2 = {:?}", result);
+        assert_eq!(result, [4u64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_gpu_mod_square_larger() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: 3^2 = 9 (mod p)
+        let a = [3u64, 0, 0, 0];
+        let result = test_mod_square_gpu(&ctx, &a).expect("GPU modular squaring failed");
+
+        println!("3^2 = {:?}", result);
+        assert_eq!(result, [9u64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_gpu_point_double() {
+        // Initialize GPU
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Test case: 2G (where G is the secp256k1 generator point)
+        // G = (Gx, Gy)
+        // Gx = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
+        let Gx = [
+            0x59F2815B16F81798u64,
+            0x029BFCDB2DCE28D9u64,
+            0x55A06295CE870B07u64,
+            0x79BE667EF9DCBBACu64,
+        ];
+        // Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
+        let Gy = [
+            0x9C47D08FFB10D4B8u64,
+            0xFD17B448A6855419u64,
+            0x5DA4FBFC0E1108A8u64,
+            0x483ADA7726A3C465u64,
+        ];
+
+        let (result_x, result_y) = test_point_double_gpu(&ctx, &Gx, &Gy)
+            .expect("GPU point doubling failed");
+
+        // Expected: 2G
+        // 2Gx = 0xC6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
+        let expected_2Gx = [
+            0xABAC09B95C709EE5u64,
+            0x5C778E4B8CEF3CA7u64,
+            0x3045406E95C07CD8u64,
+            0xC6047F9441ED7D6Du64,
+        ];
+        // 2Gy = 0x1AE168FEA63DC339A3C58419466CEAEEF7F632653266D0E1236431A950CFE52A
+        let expected_2Gy = [
+            0x236431A950CFE52Au64,
+            0xF7F632653266D0E1u64,
+            0xA3C58419466CEAEEu64,
+            0x1AE168FEA63DC339u64,
+        ];
+
+        // Check result
+        assert_eq!(result_x, expected_2Gx, "2G x-coordinate mismatch");
+        assert_eq!(result_y, expected_2Gy, "2G y-coordinate mismatch");
     }
 }
