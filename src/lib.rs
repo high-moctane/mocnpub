@@ -5,6 +5,66 @@ use hex;
 // GPU module
 pub mod gpu;
 
+// =============================================================================
+// バイト列 ↔ [u64; 4] 変換関数（GPU との連携用）
+// =============================================================================
+
+/// バイト列（32バイト、big-endian）を [u64; 4]（little-endian limbs）に変換
+///
+/// 秘密鍵を GPU に渡すときに使用
+/// - 入力: big-endian のバイト列（byte[0] が最上位バイト）
+/// - 出力: little-endian limbs（limb[0] が最下位 64 bit）
+pub fn bytes_to_u64x4(bytes: &[u8; 32]) -> [u64; 4] {
+    let mut result = [0u64; 4];
+    // byte[24..32] → limb[0]（最下位）
+    // byte[16..24] → limb[1]
+    // byte[8..16]  → limb[2]
+    // byte[0..8]   → limb[3]（最上位）
+    for i in 0..4 {
+        let offset = (3 - i) * 8; // reverse order
+        result[i] = u64::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ]);
+    }
+    result
+}
+
+/// [u64; 4]（little-endian limbs）をバイト列（32バイト、big-endian）に変換
+///
+/// GPU から返ってきた公開鍵を npub に変換するときに使用
+/// - 入力: little-endian limbs（limb[0] が最下位 64 bit）
+/// - 出力: big-endian のバイト列（byte[0] が最上位バイト）
+pub fn u64x4_to_bytes(value: &[u64; 4]) -> [u8; 32] {
+    let mut result = [0u8; 32];
+    // limb[3]（最上位）→ byte[0..8]
+    // limb[2]          → byte[8..16]
+    // limb[1]          → byte[16..24]
+    // limb[0]（最下位）→ byte[24..32]
+    for i in 0..4 {
+        let offset = (3 - i) * 8; // reverse order
+        let bytes = value[i].to_be_bytes();
+        result[offset..offset + 8].copy_from_slice(&bytes);
+    }
+    result
+}
+
+/// 公開鍵のバイト列（x座標のみ、32バイト）を npub に変換
+///
+/// GPU から返ってきた公開鍵を直接 npub に変換するために使用
+/// 既存の `pubkey_to_npub` は secp256k1::PublicKey を経由するが、
+/// この関数はバイト列から直接変換する
+pub fn pubkey_bytes_to_npub(pubkey_bytes: &[u8; 32]) -> String {
+    let hrp = Hrp::parse("npub").expect("valid hrp");
+    encode::<Bech32>(hrp, pubkey_bytes).expect("failed to encode npub")
+}
+
 /// 公開鍵（x座標のみ32バイト）を npub に変換
 pub fn pubkey_to_npub(pubkey: &PublicKey) -> String {
     // 公開鍵の hex 文字列を取得（圧縮形式）
@@ -168,5 +228,62 @@ mod tests {
 
         let err = validate_prefix("").unwrap_err();
         assert!(err.contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_bytes_u64x4_roundtrip() {
+        // ラウンドトリップテスト：bytes → u64x4 → bytes
+        let original_bytes: [u8; 32] = [
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,  // byte[0..8]
+            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,  // byte[8..16]
+            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,  // byte[16..24]
+            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5,  // byte[24..32]
+        ];
+
+        let u64x4 = bytes_to_u64x4(&original_bytes);
+        let roundtrip_bytes = u64x4_to_bytes(&u64x4);
+
+        assert_eq!(original_bytes, roundtrip_bytes, "roundtrip should preserve bytes");
+    }
+
+    #[test]
+    fn test_u64x4_to_bytes_2g() {
+        // 2G の x 座標を使ったテスト
+        // GPU の結果: [0xABAC09B95C709EE5, 0x5C778E4B8CEF3CA7, 0x3045406E95C07CD8, 0xC6047F9441ED7D6D]
+        // 期待値 (big-endian bytes): C6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
+        let gpu_result: [u64; 4] = [
+            0xABAC09B95C709EE5u64,
+            0x5C778E4B8CEF3CA7u64,
+            0x3045406E95C07CD8u64,
+            0xC6047F9441ED7D6Du64,
+        ];
+
+        let bytes = u64x4_to_bytes(&gpu_result);
+        let hex_str = hex::encode(&bytes);
+
+        assert_eq!(
+            hex_str,
+            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+            "2G x-coordinate should match"
+        );
+    }
+
+    #[test]
+    fn test_pubkey_bytes_to_npub_2g() {
+        // 2G の x 座標を npub に変換
+        let pubkey_bytes: [u8; 32] = [
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
+            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
+            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
+            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5,
+        ];
+
+        let npub = pubkey_bytes_to_npub(&pubkey_bytes);
+
+        // npub の形式が正しいことを確認
+        assert!(npub.starts_with("npub1"), "npub should start with 'npub1'");
+        assert_eq!(npub.len(), 63, "npub should be 63 characters");
+
+        println!("2G npub: {}", npub);
     }
 }
