@@ -91,6 +91,69 @@ pub fn seckey_to_nsec(seckey: &SecretKey) -> String {
     encode::<Bech32>(hrp, &bytes).expect("failed to encode nsec")
 }
 
+// =============================================================================
+// Prefix → Bit列変換（GPU での高速マッチング用）
+// =============================================================================
+
+/// bech32 の文字セット（順番が重要！各文字の位置が 5 bit 値に対応）
+const BECH32_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/// prefix を bit 列に変換（GPU での高速マッチング用）
+///
+/// bech32 の各文字を 5 bit 値に変換し、連結して u64 の上位ビットに配置
+///
+/// # Arguments
+/// * `prefix` - 変換する prefix（最大 12 文字 = 60 bit）
+///
+/// # Returns
+/// * `(pattern, mask, bit_len)` - パターン、マスク、ビット長
+///   - pattern: prefix を 5 bit ずつ連結した値（u64 の上位ビットに配置）
+///   - mask: 有効ビットが 1 のマスク（上位 bit_len ビットが 1）
+///   - bit_len: 有効ビット数（prefix_len * 5）
+///
+/// # Example
+/// ```
+/// let (pattern, mask, bit_len) = prefix_to_bits("m0");
+/// // 'm' = 27 (11011), '0' = 15 (01111)
+/// // pattern = 0b11011_01111_000...0 (上位 10 bit)
+/// // mask    = 0b11111_11111_000...0 (上位 10 bit が 1)
+/// // bit_len = 10
+/// ```
+pub fn prefix_to_bits(prefix: &str) -> (u64, u64, u32) {
+    let mut pattern: u64 = 0;
+    let mut bit_pos: u32 = 64;  // 上位から配置
+
+    for ch in prefix.chars() {
+        // bech32 文字セットでの位置を取得（0-31）
+        let value = BECH32_CHARSET.find(ch).expect("invalid bech32 char") as u64;
+
+        // 5 bit 分シフトして配置
+        bit_pos -= 5;
+        pattern |= value << bit_pos;
+    }
+
+    let bit_len = (prefix.len() as u32) * 5;
+    let mask = if bit_len >= 64 {
+        u64::MAX
+    } else {
+        !((1u64 << (64 - bit_len)) - 1)  // 上位 bit_len ビットが 1
+    };
+
+    (pattern, mask, bit_len)
+}
+
+/// 複数の prefix を bit 列に変換
+///
+/// # Returns
+/// * `Vec<(pattern, mask, bit_len)>` - 各 prefix のパターン、マスク、ビット長
+pub fn prefixes_to_bits(prefixes: &[String]) -> Vec<(u64, u64, u32)> {
+    prefixes.iter().map(|p| prefix_to_bits(p)).collect()
+}
+
+// =============================================================================
+// Prefix 検証
+// =============================================================================
+
 /// prefix の妥当性を検証（bech32 の有効文字のみを許可）
 ///
 /// bech32 で使用可能な文字: 023456789acdefghjklmnpqrstuvwxyz (32文字)
@@ -285,5 +348,95 @@ mod tests {
         assert_eq!(npub.len(), 63, "npub should be 63 characters");
 
         println!("2G npub: {}", npub);
+    }
+
+    #[test]
+    fn test_prefix_to_bits_single_char() {
+        // 1文字のテスト: 'q' = 0, 'm' = 27, 'l' = 31
+        let (pattern, mask, bit_len) = prefix_to_bits("q");
+        assert_eq!(bit_len, 5);
+        assert_eq!(pattern, 0b00000_u64 << 59);  // 'q' = 0
+        assert_eq!(mask, 0b11111_u64 << 59);
+
+        let (pattern, _, _) = prefix_to_bits("m");
+        assert_eq!(pattern, 0b11011_u64 << 59);  // 'm' = 27
+
+        let (pattern, _, _) = prefix_to_bits("l");
+        assert_eq!(pattern, 0b11111_u64 << 59);  // 'l' = 31
+    }
+
+    #[test]
+    fn test_prefix_to_bits_m0() {
+        // 'm0' = 27, 15 = 11011_01111
+        let (pattern, mask, bit_len) = prefix_to_bits("m0");
+        assert_eq!(bit_len, 10);
+
+        // 'm' = 27 (11011), '0' = 15 (01111)
+        // 上位 10 bit に配置: 11011_01111_00...0
+        let expected_pattern = (0b11011_01111_u64) << 54;
+        assert_eq!(pattern, expected_pattern);
+
+        // マスク: 上位 10 bit が 1
+        let expected_mask = 0b11111_11111_u64 << 54;
+        assert_eq!(mask, expected_mask);
+    }
+
+    #[test]
+    fn test_prefix_to_bits_m0ctane() {
+        // 'm0ctane' (7文字 = 35 bit)
+        // 'm'=27, '0'=15, 'c'=24, 't'=11, 'a'=29, 'n'=19, 'e'=25
+        let (pattern, mask, bit_len) = prefix_to_bits("m0ctane");
+        assert_eq!(bit_len, 35);
+
+        // 各文字の 5 bit 値を連結
+        let m = 27u64;  // 11011
+        let zero = 15u64;  // 01111
+        let c = 24u64;  // 11000
+        let t = 11u64;  // 01011
+        let a = 29u64;  // 11101
+        let n = 19u64;  // 10011
+        let e = 25u64;  // 11001
+
+        let expected_pattern = (m << 30 | zero << 25 | c << 20 | t << 15 | a << 10 | n << 5 | e) << (64 - 35);
+        assert_eq!(pattern, expected_pattern);
+
+        // マスク: 上位 35 bit が 1
+        let expected_mask = !((1u64 << (64 - 35)) - 1);
+        assert_eq!(mask, expected_mask);
+    }
+
+    #[test]
+    fn test_prefix_to_bits_matches_npub() {
+        // 実際の npub との整合性テスト
+        // 2G の npub を生成して、prefix がマッチすることを確認
+        let pubkey_bytes: [u8; 32] = [
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
+            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
+            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
+            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5,
+        ];
+
+        let npub = pubkey_bytes_to_npub(&pubkey_bytes);
+        let npub_body = &npub[5..];  // "npub1" を除去
+        println!("2G npub body: {}", npub_body);
+
+        // npub body の最初の数文字で prefix を作って、ビットマッチングをテスト
+        let prefix = &npub_body[..4];  // 最初の 4 文字
+        println!("Testing prefix: {}", prefix);
+
+        let (pattern, mask, bit_len) = prefix_to_bits(prefix);
+        println!("pattern: {:064b}", pattern);
+        println!("mask:    {:064b}", mask);
+        println!("bit_len: {}", bit_len);
+
+        // pubkey_bytes の上位 64 bit を取得
+        let pubkey_upper = u64::from_be_bytes([
+            pubkey_bytes[0], pubkey_bytes[1], pubkey_bytes[2], pubkey_bytes[3],
+            pubkey_bytes[4], pubkey_bytes[5], pubkey_bytes[6], pubkey_bytes[7],
+        ]);
+        println!("pubkey upper: {:064b}", pubkey_upper);
+
+        // マッチするはず！
+        assert_eq!(pubkey_upper & mask, pattern & mask, "prefix should match");
     }
 }

@@ -604,6 +604,137 @@ pub fn generate_pubkeys_sequential_montgomery_batch(
     Ok(pubkeys_x)
 }
 
+/// Match result from GPU prefix matching
+#[derive(Debug, Clone)]
+pub struct GpuMatch {
+    /// Thread index (which base key)
+    pub base_idx: u32,
+    /// Key offset within thread (0 = base key, 1 = base+1, etc.)
+    pub offset: u32,
+    /// Public key x-coordinate
+    pub pubkey_x: [u64; 4],
+}
+
+/// Generate public keys with GPU-side prefix matching
+///
+/// This function generates public keys using Montgomery's Trick and filters
+/// them by prefix on the GPU, returning only matching keys.
+///
+/// # Arguments
+/// * `ctx` - GPU context
+/// * `base_keys` - Starting private keys for each thread
+/// * `keys_per_thread` - Number of consecutive keys each thread generates (max 256)
+/// * `prefix_bits` - Prefix patterns and masks: Vec<(pattern, mask, bit_len)>
+/// * `max_matches` - Maximum number of matches to return
+///
+/// # Returns
+/// * `Vec<GpuMatch>` - Matching keys with their indices and public keys
+pub fn generate_pubkeys_with_prefix_match(
+    ctx: &Arc<CudaContext>,
+    base_keys: &[[u64; 4]],
+    keys_per_thread: u32,
+    prefix_bits: &[(u64, u64, u32)],
+    max_matches: u32,
+) -> Result<Vec<GpuMatch>, Box<dyn std::error::Error>> {
+    let num_threads = base_keys.len();
+    let num_prefixes = prefix_bits.len();
+
+    if num_threads == 0 || keys_per_thread == 0 || num_prefixes == 0 {
+        return Ok(vec![]);
+    }
+
+    // Clamp to max 256 (CUDA kernel limit)
+    let keys_per_thread = keys_per_thread.min(256);
+
+    // Get default stream
+    let stream = ctx.default_stream();
+
+    // Load PTX module
+    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let module = ctx.load_module(Ptx::from_src(ptx_code))?;
+    let kernel = module.load_function("generate_pubkeys_with_prefix_match")?;
+
+    // Flatten base keys to Vec<u64>
+    let base_keys_flat: Vec<u64> = base_keys.iter().flat_map(|k| k.iter().copied()).collect();
+
+    // Prepare prefix patterns and masks
+    let patterns: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
+    let masks: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
+
+    // Allocate device memory for inputs
+    let mut base_keys_dev = stream.alloc_zeros::<u64>(num_threads * 4)?;
+    let mut patterns_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
+    let mut masks_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
+
+    // Allocate device memory for outputs
+    let mut matched_base_idx_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
+    let mut matched_offset_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
+    let mut matched_pubkeys_x_dev = stream.alloc_zeros::<u64>(max_matches as usize * 4)?;
+    let mut match_count_dev = stream.alloc_zeros::<u32>(1)?;
+
+    // Copy inputs to device
+    stream.memcpy_htod(&base_keys_flat, &mut base_keys_dev)?;
+    stream.memcpy_htod(&patterns, &mut patterns_dev)?;
+    stream.memcpy_htod(&masks, &mut masks_dev)?;
+
+    // Calculate grid and block dimensions
+    let threads_per_block = 64u32;
+    let num_blocks = (num_threads as u32 + threads_per_block - 1) / threads_per_block;
+
+    let config = LaunchConfig {
+        grid_dim: (num_blocks, 1, 1),
+        block_dim: (threads_per_block, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // Launch kernel
+    let num_threads_u32 = num_threads as u32;
+    let num_prefixes_u32 = num_prefixes as u32;
+    let mut builder = stream.launch_builder(&kernel);
+    builder.arg(&mut base_keys_dev);
+    builder.arg(&mut patterns_dev);
+    builder.arg(&mut masks_dev);
+    builder.arg(&num_prefixes_u32);
+    builder.arg(&mut matched_base_idx_dev);
+    builder.arg(&mut matched_offset_dev);
+    builder.arg(&mut matched_pubkeys_x_dev);
+    builder.arg(&mut match_count_dev);
+    builder.arg(&num_threads_u32);
+    builder.arg(&keys_per_thread);
+    builder.arg(&max_matches);
+    unsafe {
+        builder.launch(config)?;
+    }
+
+    // Copy match count back
+    let match_count_vec = stream.memcpy_dtov(&match_count_dev)?;
+    let match_count = match_count_vec[0].min(max_matches) as usize;
+
+    if match_count == 0 {
+        return Ok(vec![]);
+    }
+
+    // Copy results back
+    let matched_base_idx = stream.memcpy_dtov(&matched_base_idx_dev)?;
+    let matched_offset = stream.memcpy_dtov(&matched_offset_dev)?;
+    let matched_pubkeys_x_flat = stream.memcpy_dtov(&matched_pubkeys_x_dev)?;
+
+    // Build result vector
+    let mut results = Vec::with_capacity(match_count);
+    for i in 0..match_count {
+        let mut pubkey_x = [0u64; 4];
+        pubkey_x.copy_from_slice(&matched_pubkeys_x_flat[i * 4..(i + 1) * 4]);
+
+        results.push(GpuMatch {
+            base_idx: matched_base_idx[i],
+            offset: matched_offset[i],
+            pubkey_x,
+        });
+    }
+
+    Ok(results)
+}
+
 /// Test mixed point addition on GPU (for unit testing)
 pub fn test_point_add_mixed_gpu(
     ctx: &Arc<CudaContext>,
@@ -1678,6 +1809,166 @@ mod tests {
             println!("  Montgomery (Phase 2):       {:>10.2?}  ({:.2}x vs Batch, {:.2}x vs Phase1) 🔥",
                      mont_time, speedup_mont, mont_vs_seq);
             println!();
+        }
+    }
+
+    #[test]
+    fn test_gpu_prefix_match_basic() {
+        use crate::{prefix_to_bits, u64x4_to_bytes, pubkey_bytes_to_npub};
+
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Use a known prefix that's likely to match with small keys
+        // We'll use prefix "c" (1 char = 5 bits) which has ~1/32 chance of matching
+        let prefix = "c";
+        let prefix_bits = vec![prefix_to_bits(prefix)];
+
+        // Generate with 64 threads × 256 keys = 16384 keys
+        // With 1/32 chance, we expect ~512 matches
+        let num_threads = 64;
+        let keys_per_thread = 256u32;
+
+        let base_keys: Vec<[u64; 4]> = (0..num_threads)
+            .map(|i| [2 + (i * keys_per_thread as usize) as u64, 0, 0, 0])
+            .collect();
+
+        let max_matches = 1000u32;
+
+        let matches = generate_pubkeys_with_prefix_match(
+            &ctx,
+            &base_keys,
+            keys_per_thread,
+            &prefix_bits,
+            max_matches,
+        ).expect("GPU prefix match failed");
+
+        println!("\nGPU Prefix Match Test:");
+        println!("  Prefix: '{}'", prefix);
+        println!("  Total keys: {}", num_threads * keys_per_thread as usize);
+        println!("  Matches found: {}", matches.len());
+
+        // Verify at least some matches were found
+        assert!(!matches.is_empty(), "Should find at least some matches with prefix 'c'");
+
+        // Verify the first few matches are correct
+        for (i, m) in matches.iter().take(5).enumerate() {
+            let pubkey_bytes = u64x4_to_bytes(&m.pubkey_x);
+            let npub = pubkey_bytes_to_npub(&pubkey_bytes);
+            let npub_body = &npub[5..];  // Remove "npub1"
+
+            println!("  Match {}: base_idx={}, offset={}, npub={}...",
+                     i, m.base_idx, m.offset, &npub_body[..10]);
+
+            // Verify the npub actually starts with the prefix
+            assert!(npub_body.starts_with(prefix),
+                    "npub {} should start with prefix '{}'", npub_body, prefix);
+        }
+
+        println!("  ✅ All verified matches start with prefix '{}'", prefix);
+    }
+
+    #[test]
+    fn test_gpu_prefix_match_multiple_prefixes() {
+        use crate::{prefix_to_bits, u64x4_to_bytes, pubkey_bytes_to_npub};
+
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Multiple prefixes (OR matching)
+        let prefixes = vec!["c", "8", "q"];
+        let prefix_bits: Vec<_> = prefixes.iter().map(|p| prefix_to_bits(p)).collect();
+
+        let num_threads = 64;
+        let keys_per_thread = 256u32;
+
+        let base_keys: Vec<[u64; 4]> = (0..num_threads)
+            .map(|i| [2 + (i * keys_per_thread as usize) as u64, 0, 0, 0])
+            .collect();
+
+        let max_matches = 2000u32;
+
+        let matches = generate_pubkeys_with_prefix_match(
+            &ctx,
+            &base_keys,
+            keys_per_thread,
+            &prefix_bits,
+            max_matches,
+        ).expect("GPU prefix match failed");
+
+        println!("\nGPU Multiple Prefix Match Test:");
+        println!("  Prefixes: {:?}", prefixes);
+        println!("  Total keys: {}", num_threads * keys_per_thread as usize);
+        println!("  Matches found: {}", matches.len());
+
+        // With 3 prefixes, each 1/32 chance, we expect ~1536 matches
+        assert!(!matches.is_empty(), "Should find matches with multiple prefixes");
+
+        // Verify matches start with one of the prefixes
+        for (i, m) in matches.iter().take(5).enumerate() {
+            let pubkey_bytes = u64x4_to_bytes(&m.pubkey_x);
+            let npub = pubkey_bytes_to_npub(&pubkey_bytes);
+            let npub_body = &npub[5..];
+
+            let matches_any = prefixes.iter().any(|p| npub_body.starts_with(p));
+            println!("  Match {}: npub={}... (matches: {})",
+                     i, &npub_body[..10], matches_any);
+
+            assert!(matches_any,
+                    "npub {} should start with one of {:?}", npub_body, prefixes);
+        }
+
+        println!("  ✅ All verified matches start with one of the prefixes");
+    }
+
+    #[test]
+    fn test_gpu_prefix_match_longer_prefix() {
+        use crate::{prefix_to_bits, u64x4_to_bytes, pubkey_bytes_to_npub};
+
+        let ctx = init_gpu().expect("Failed to initialize GPU");
+
+        // Longer prefix (2 chars = 10 bits, ~1/1024 chance)
+        let prefix = "cc";
+        let prefix_bits = vec![prefix_to_bits(prefix)];
+
+        // Need more keys to find matches
+        let num_threads = 256;
+        let keys_per_thread = 256u32;
+
+        let base_keys: Vec<[u64; 4]> = (0..num_threads)
+            .map(|i| [2 + (i * keys_per_thread as usize) as u64, 0, 0, 0])
+            .collect();
+
+        let max_matches = 100u32;
+
+        let matches = generate_pubkeys_with_prefix_match(
+            &ctx,
+            &base_keys,
+            keys_per_thread,
+            &prefix_bits,
+            max_matches,
+        ).expect("GPU prefix match failed");
+
+        println!("\nGPU Longer Prefix Match Test:");
+        println!("  Prefix: '{}'", prefix);
+        println!("  Total keys: {}", num_threads * keys_per_thread as usize);
+        println!("  Matches found: {}", matches.len());
+
+        // With 65536 keys and 1/1024 chance, expect ~64 matches
+        // Might be 0 due to randomness, but verify any matches are correct
+        for (i, m) in matches.iter().take(5).enumerate() {
+            let pubkey_bytes = u64x4_to_bytes(&m.pubkey_x);
+            let npub = pubkey_bytes_to_npub(&pubkey_bytes);
+            let npub_body = &npub[5..];
+
+            println!("  Match {}: npub={}...", i, &npub_body[..10]);
+
+            assert!(npub_body.starts_with(prefix),
+                    "npub {} should start with prefix '{}'", npub_body, prefix);
+        }
+
+        if !matches.is_empty() {
+            println!("  ✅ All verified matches start with prefix '{}'", prefix);
+        } else {
+            println!("  ℹ️ No matches found (expected with longer prefix)");
         }
     }
 }

@@ -1303,3 +1303,152 @@ extern "C" __global__ void test_point_add_mixed(
         output_y[i] = result_y[i];
     }
 }
+
+// ============================================================================
+// Prefix Matching Kernel (GPU-side filtering)
+// ============================================================================
+
+/**
+ * Generate public keys and filter by prefix matching on GPU
+ *
+ * This kernel combines Montgomery's Trick with prefix matching,
+ * returning only the keys that match the specified prefixes.
+ *
+ * Input:
+ *   - base_keys: starting private keys [num_threads * 4]
+ *   - patterns: prefix bit patterns [num_prefixes] (upper bits of u64)
+ *   - masks: prefix bit masks [num_prefixes] (upper bits set to 1)
+ *   - num_prefixes: number of prefixes to match
+ *   - num_threads: number of threads
+ *   - keys_per_thread: consecutive keys per thread (max 256)
+ *   - max_matches: maximum number of matches to store
+ *
+ * Output:
+ *   - matched_base_idx: thread index of matched keys [max_matches]
+ *   - matched_offset: key offset within thread [max_matches]
+ *   - matched_pubkeys_x: x-coordinates of matched pubkeys [max_matches * 4]
+ *   - match_count: number of matches found (atomic counter)
+ */
+extern "C" __global__ void generate_pubkeys_with_prefix_match(
+    const uint64_t* base_keys,
+    const uint64_t* patterns,
+    const uint64_t* masks,
+    uint32_t num_prefixes,
+    uint32_t* matched_base_idx,
+    uint32_t* matched_offset,
+    uint64_t* matched_pubkeys_x,
+    uint32_t* match_count,
+    uint32_t num_threads,
+    uint32_t keys_per_thread,
+    uint32_t max_matches
+)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_threads) return;
+
+    // Local arrays for storing intermediate Jacobian coordinates
+    uint64_t X_arr[MAX_KEYS_PER_THREAD][4];
+    uint64_t Y_arr[MAX_KEYS_PER_THREAD][4];
+    uint64_t Z_arr[MAX_KEYS_PER_THREAD][4];
+    uint64_t c[MAX_KEYS_PER_THREAD][4];  // Cumulative products
+
+    // Clamp keys_per_thread to MAX_KEYS_PER_THREAD
+    uint32_t n = keys_per_thread;
+    if (n > MAX_KEYS_PER_THREAD) n = MAX_KEYS_PER_THREAD;
+
+    // Load base private key
+    uint64_t k[4];
+    for (int i = 0; i < 4; i++) {
+        k[i] = base_keys[idx * 4 + i];
+    }
+
+    // === Phase 1: Generate all points in Jacobian coordinates ===
+
+    // First point: P = k * G (heavy operation)
+    uint64_t Px[4], Py[4], Pz[4];
+    _PointMult(k, _Gx, _Gy, Px, Py, Pz);
+
+    // Store first point
+    for (int i = 0; i < 4; i++) {
+        X_arr[0][i] = Px[i];
+        Y_arr[0][i] = Py[i];
+        Z_arr[0][i] = Pz[i];
+    }
+
+    // Generate subsequent points using P = P + G (light operation!)
+    for (uint32_t key_idx = 1; key_idx < n; key_idx++) {
+        uint64_t tempX[4], tempY[4], tempZ[4];
+        _PointAddMixed(Px, Py, Pz, _Gx, _Gy, tempX, tempY, tempZ);
+
+        // Copy and store
+        for (int i = 0; i < 4; i++) {
+            Px[i] = tempX[i];
+            Py[i] = tempY[i];
+            Pz[i] = tempZ[i];
+            X_arr[key_idx][i] = Px[i];
+            Y_arr[key_idx][i] = Py[i];
+            Z_arr[key_idx][i] = Pz[i];
+        }
+    }
+
+    // === Phase 2: Montgomery's Trick for batch inverse ===
+
+    // Step 1: Compute cumulative products
+    for (int i = 0; i < 4; i++) {
+        c[0][i] = Z_arr[0][i];
+    }
+    for (uint32_t i = 1; i < n; i++) {
+        _ModMult(c[i-1], Z_arr[i], c[i]);
+    }
+
+    // Step 2: Compute inverse of cumulative product (SINGLE _ModInv!)
+    uint64_t u[4];
+    _ModInv(c[n-1], u);
+
+    // Step 3: Compute individual inverses and check prefix match
+    for (int32_t i = n - 1; i >= 0; i--) {
+        // Z_inv = u * c[i-1] (or just u for i=0)
+        uint64_t Z_inv[4];
+        if (i > 0) {
+            _ModMult(u, c[i-1], Z_inv);
+        } else {
+            for (int j = 0; j < 4; j++) Z_inv[j] = u[j];
+        }
+
+        // Convert to Affine: x = X * Z_inv^2
+        uint64_t Z_inv_squared[4];
+        _ModSquare(Z_inv, Z_inv_squared);
+
+        uint64_t x[4];
+        _ModMult(X_arr[i], Z_inv_squared, x);
+
+        // === Prefix matching ===
+        // x[3] is the most significant 64 bits (little-endian limbs)
+        uint64_t x_upper = x[3];
+
+        // Check against all prefixes
+        for (uint32_t p = 0; p < num_prefixes; p++) {
+            if ((x_upper & masks[p]) == (patterns[p] & masks[p])) {
+                // Match found! Atomically reserve output slot
+                uint32_t slot = atomicAdd(match_count, 1);
+                if (slot < max_matches) {
+                    matched_base_idx[slot] = idx;
+                    matched_offset[slot] = i;
+                    for (int j = 0; j < 4; j++) {
+                        matched_pubkeys_x[slot * 4 + j] = x[j];
+                    }
+                }
+                break;  // Only count once per key (even if multiple prefixes match)
+            }
+        }
+
+        // Update u for next iteration (if not the last)
+        if (i > 0) {
+            uint64_t temp[4];
+            _ModMult(u, Z_arr[i], temp);
+            for (int j = 0; j < 4; j++) {
+                u[j] = temp[j];
+            }
+        }
+    }
+}
