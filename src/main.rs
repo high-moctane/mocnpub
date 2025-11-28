@@ -10,7 +10,8 @@ use std::sync::{mpsc, Arc};
 // lib.rs から共通関数を import
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
 use mocnpub_main::{bytes_to_u64x4, u64x4_to_bytes, pubkey_bytes_to_npub};
-use mocnpub_main::gpu::{init_gpu, generate_pubkeys_batch};
+use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar};
+use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match};
 
 /// Nostr npub マイニングツール 🔑
 ///
@@ -264,7 +265,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// GPU マイニングモード
+/// GPU マイニングモード（GPU 側 prefix マッチング）
 fn run_gpu_mining(
     prefixes: &[String],
     limit: usize,
@@ -279,7 +280,11 @@ fn run_gpu_mining(
             std::process::exit(1);
         }
     };
-    println!("✅ GPU initialized successfully!\n");
+    println!("✅ GPU initialized successfully!");
+
+    // prefix を bit パターンに変換（事前計算）
+    let prefix_bits = prefixes_to_bits(prefixes);
+    println!("📊 Prefix patterns prepared: {} pattern(s)\n", prefix_bits.len());
 
     let start = Instant::now();
     let mut total_count: u64 = 0;
@@ -296,20 +301,30 @@ fn run_gpu_mining(
         None
     };
 
-    // 秘密鍵のバッファ（バイト列として保持、結果出力時に nsec を生成するため）
+    // パラメータ設定
+    let keys_per_thread: u32 = 256;  // Montgomery's Trick の最大効率
+    let max_matches: u32 = 1000;     // 余裕を持って
+
+    // 秘密鍵のバッファ（base keys）
     let mut privkey_bytes: Vec<[u8; 32]> = vec![[0u8; 32]; batch_size];
     let mut privkeys_u64: Vec<[u64; 4]> = vec![[0u64; 4]; batch_size];
 
     // メインループ
     loop {
-        // 1. ランダムな秘密鍵をバッチで生成（CPU）
+        // 1. ランダムな base keys を生成（CPU）
         for i in 0..batch_size {
             rng.fill_bytes(&mut privkey_bytes[i]);
             privkeys_u64[i] = bytes_to_u64x4(&privkey_bytes[i]);
         }
 
-        // 2. GPU で公開鍵を生成
-        let pubkeys_x = match generate_pubkeys_batch(&ctx, &privkeys_u64) {
+        // 2. GPU で公開鍵生成 + prefix マッチング
+        let matches = match generate_pubkeys_with_prefix_match(
+            &ctx,
+            &privkeys_u64,
+            keys_per_thread,
+            &prefix_bits,
+            max_matches,
+        ) {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("❌ GPU kernel error: {}", e);
@@ -317,87 +332,95 @@ fn run_gpu_mining(
             }
         };
 
-        // 3. CPU で npub に変換＆prefix マッチング
-        for i in 0..batch_size {
-            total_count += 1;
+        // 試行回数を更新
+        total_count += (batch_size as u64) * (keys_per_thread as u64);
 
-            // [u64; 4] → [u8; 32] → npub
-            let pubkey_bytes = u64x4_to_bytes(&pubkeys_x[i]);
-            let npub = pubkey_bytes_to_npub(&pubkey_bytes);
-            let npub_body = &npub[5..]; // "npub1" は5文字
+        // 3. マッチした結果を処理
+        for m in matches {
+            found_count += 1;
 
-            // prefix マッチング
-            if let Some(matched_prefix) = prefixes.iter().find(|p| npub_body.starts_with(p.as_str())) {
-                found_count += 1;
+            // 秘密鍵を復元: base_key + offset
+            let base_key = &privkeys_u64[m.base_idx as usize];
+            let actual_key_u64 = add_u64x4_scalar(base_key, m.offset);
+            let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
 
-                let elapsed = start.elapsed();
-                let elapsed_secs = elapsed.as_secs_f64();
-                let keys_per_sec = total_count as f64 / elapsed_secs;
+            // npub を計算（検証用）
+            let npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
+            let npub_body = &npub[5..];
 
-                // 秘密鍵から nsec を生成
-                let sk = SecretKey::from_slice(&privkey_bytes[i])
-                    .expect("Invalid secret key");
-                let nsec = seckey_to_nsec(&sk);
+            // マッチした prefix を特定
+            let matched_prefix = prefixes.iter()
+                .find(|p| npub_body.starts_with(p.as_str()))
+                .map(|p| p.as_str())
+                .unwrap_or("?");
 
-                // 公開鍵を取得（表示用）
-                let secp = Secp256k1::new();
-                let pk = sk.public_key(&secp);
-                let pk_hex = pk.to_string();
-                let pk_x_only = &pk_hex[2..];
+            let elapsed = start.elapsed();
+            let elapsed_secs = elapsed.as_secs_f64();
+            let keys_per_sec = total_count as f64 / elapsed_secs;
 
-                // 結果を整形
-                let output_text = format!(
-                    "✅ {}個目が見つかりました！（{}回試行、GPU）\n\
-                     マッチした prefix: '{}'\n\n\
-                     経過時間: {:.2}秒\n\
-                     パフォーマンス: {:.2} keys/sec\n\n\
-                     秘密鍵（hex）: {}\n\
-                     秘密鍵（nsec）: {}\n\
-                     公開鍵（圧縮形式）: {}\n\
-                     公開鍵（x座標のみ）: {}\n\
-                     公開鍵（npub）: {}\n\
+            // 秘密鍵から nsec を生成
+            let sk = SecretKey::from_slice(&actual_key_bytes)
+                .expect("Invalid secret key");
+            let nsec = seckey_to_nsec(&sk);
+
+            // 公開鍵を取得（表示用）
+            let secp = Secp256k1::new();
+            let pk = sk.public_key(&secp);
+            let pk_hex = pk.to_string();
+            let pk_x_only = &pk_hex[2..];
+
+            // 結果を整形
+            let output_text = format!(
+                "✅ {}個目が見つかりました！（{}回試行、GPU prefix match）\n\
+                 マッチした prefix: '{}'\n\n\
+                 経過時間: {:.2}秒\n\
+                 パフォーマンス: {:.2} keys/sec\n\n\
+                 秘密鍵（hex）: {}\n\
+                 秘密鍵（nsec）: {}\n\
+                 公開鍵（圧縮形式）: {}\n\
+                 公開鍵（x座標のみ）: {}\n\
+                 公開鍵（npub）: {}\n\
 {}\n",
-                    found_count,
-                    total_count,
-                    matched_prefix,
-                    elapsed_secs,
-                    keys_per_sec,
-                    sk.display_secret(),
-                    nsec,
-                    pk,
-                    pk_x_only,
-                    npub,
-                    "=".repeat(80)
-                );
+                found_count,
+                total_count,
+                matched_prefix,
+                elapsed_secs,
+                keys_per_sec,
+                sk.display_secret(),
+                nsec,
+                pk,
+                pk_x_only,
+                npub,
+                "=".repeat(80)
+            );
 
-                // 出力
-                if let Some(ref mut file) = output_file {
-                    file.write_all(output_text.as_bytes())?;
-                    file.flush()?;
-                }
-                print!("{}", output_text);
-                io::stdout().flush()?;
+            // 出力
+            if let Some(ref mut file) = output_file {
+                file.write_all(output_text.as_bytes())?;
+                file.flush()?;
+            }
+            print!("{}", output_text);
+            io::stdout().flush()?;
 
-                // limit 個見つかったら終了
-                if limit > 0 && found_count >= limit {
-                    // 最終結果を表示
-                    let final_elapsed = start.elapsed();
-                    let final_elapsed_secs = final_elapsed.as_secs_f64();
-                    println!("\n🎉 GPU マイニング完了！");
-                    println!("見つかった鍵: {}個", found_count);
-                    println!("総試行回数: {}回", total_count);
-                    println!("経過時間: {:.2}秒", final_elapsed_secs);
-                    println!("パフォーマンス: {:.2} keys/sec", total_count as f64 / final_elapsed_secs);
-                    if let Some(path) = output_path {
-                        println!("結果をファイルに保存しました: {}", path);
-                    }
-                    return Ok(());
+            // limit 個見つかったら終了
+            if limit > 0 && found_count >= limit {
+                let final_elapsed = start.elapsed();
+                let final_elapsed_secs = final_elapsed.as_secs_f64();
+                println!("\n🎉 GPU マイニング完了！");
+                println!("見つかった鍵: {}個", found_count);
+                println!("総試行回数: {}回", total_count);
+                println!("経過時間: {:.2}秒", final_elapsed_secs);
+                println!("パフォーマンス: {:.2} keys/sec", total_count as f64 / final_elapsed_secs);
+                if let Some(path) = output_path {
+                    println!("結果をファイルに保存しました: {}", path);
                 }
+                return Ok(());
             }
         }
 
-        // 進捗表示（バッチごと）
-        if total_count % (batch_size as u64 * 10) == 0 {
+        // 進捗表示（10バッチごと）
+        let batch_keys = (batch_size as u64) * (keys_per_thread as u64);
+        if total_count % (batch_keys * 10) == 0 {
             let elapsed_secs = start.elapsed().as_secs_f64();
             let keys_per_sec = total_count as f64 / elapsed_secs;
             println!("{}回試行中... ({:.2} keys/sec, 見つかった: {}個)",

@@ -151,6 +151,52 @@ pub fn prefixes_to_bits(prefixes: &[String]) -> Vec<(u64, u64, u32)> {
 }
 
 // =============================================================================
+// 256-bit 演算（連続秘密鍵戦略用）
+// =============================================================================
+
+/// 256-bit 値（[u64; 4]）に offset を加算
+///
+/// 連続秘密鍵戦略で、base_key + offset を計算するために使用。
+/// offset は u32 なので、最下位 limb への加算と carry 伝播のみ。
+///
+/// # Arguments
+/// * `base` - 256-bit 値（little-endian limbs: base[0] が最下位）
+/// * `offset` - 加算する値（最大 u32::MAX）
+///
+/// # Returns
+/// * `[u64; 4]` - base + offset の結果
+///
+/// # Example
+/// ```
+/// use mocnpub_main::add_u64x4_scalar;
+/// let base = [0xFFFFFFFF_FFFFFFFFu64, 0, 0, 0];
+/// let result = add_u64x4_scalar(&base, 1);
+/// assert_eq!(result, [0, 1, 0, 0]); // carry が発生
+/// ```
+pub fn add_u64x4_scalar(base: &[u64; 4], offset: u32) -> [u64; 4] {
+    let mut result = *base;
+
+    // offset を最下位 limb に加算
+    let (sum, carry) = result[0].overflowing_add(offset as u64);
+    result[0] = sum;
+
+    // carry を伝播
+    if carry {
+        let (sum, carry) = result[1].overflowing_add(1);
+        result[1] = sum;
+        if carry {
+            let (sum, carry) = result[2].overflowing_add(1);
+            result[2] = sum;
+            if carry {
+                result[3] = result[3].wrapping_add(1);
+            }
+        }
+    }
+
+    result
+}
+
+// =============================================================================
 // Prefix 検証
 // =============================================================================
 
