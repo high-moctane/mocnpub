@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use std::hint::black_box;
 use secp256k1::{rand, Secp256k1};
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
 use mocnpub_main::gpu::{

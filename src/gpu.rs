@@ -230,6 +230,7 @@ pub fn test_mod_square_gpu(
 /// This function tests the _PointDouble function by doubling a point on the secp256k1 curve
 /// Input: Point in Affine coordinates (x, y)
 /// Output: 2*Point in Affine coordinates (x, y)
+#[allow(non_snake_case)]
 pub fn test_point_double_gpu(
     ctx: &Arc<CudaContext>,
     x: &[u64; 4],
@@ -664,6 +665,7 @@ pub fn test_point_add_mixed_gpu(
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
 
