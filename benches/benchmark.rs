@@ -117,10 +117,20 @@ fn bench_gpu_methods(c: &mut Criterion) {
 
     // テスト設定: (num_threads, keys_per_thread)
     let configs = [
-        (256, 64),   // 16,384 keys
-        (256, 256),  // 65,536 keys
-        (1024, 64),  // 65,536 keys
-        (1024, 256), // 262,144 keys
+        // 小規模（ウォームアップ用）
+        (256, 64),    // 16,384 keys
+        (256, 256),   // 65,536 keys
+        // 中規模
+        (1024, 64),   // 65,536 keys
+        (1024, 256),  // 262,144 keys
+        (1024, 1024), // 1,048,576 keys (1M keys!)
+        // 大規模（10000連ガチャ！）
+        (1024, 4096),  // 4,194,304 keys (4M keys!)
+        (1024, 10000), // 10,240,000 keys (10M keys!) 🔥
+        // スレッド数を増やす
+        (2048, 256),  // 524,288 keys
+        (2048, 1024), // 2,097,152 keys (2M keys!)
+        (4096, 256),  // 1,048,576 keys (1M keys!)
     ];
 
     for (num_threads, keys_per_thread) in configs {
@@ -183,8 +193,9 @@ fn bench_gpu_keys_per_thread(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("gpu_keys_per_thread");
 
-    let num_threads = 256;
-    let keys_per_thread_options = [16, 32, 64, 128, 256];
+    let num_threads = 1024;  // より実用的なスレッド数
+    // 10000連 → 1億連まで！どこまでスケールするか？
+    let keys_per_thread_options = [10000, 20000, 50000, 100000];
 
     for keys_per_thread in keys_per_thread_options {
         let base_keys: Vec<[u64; 4]> = (0..num_threads)
