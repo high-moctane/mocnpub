@@ -10,7 +10,7 @@ use std::sync::{mpsc, Arc};
 // lib.rs から共通関数を import
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
 use mocnpub_main::{bytes_to_u64x4, u64x4_to_bytes, pubkey_bytes_to_npub};
-use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar};
+use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar, adjust_privkey_for_endomorphism};
 use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match};
 
 /// Nostr npub マイニングツール 🔑
@@ -339,9 +339,11 @@ fn run_gpu_mining(
         for m in matches {
             found_count += 1;
 
-            // 秘密鍵を復元: base_key + offset
+            // 秘密鍵を復元: (base_key + offset) * λ^endo_type mod n
+            // endo_type: 0 = original, 1 = λ*k, 2 = λ²*k (for endomorphism)
             let base_key = &privkeys_u64[m.base_idx as usize];
-            let actual_key_u64 = add_u64x4_scalar(base_key, m.offset);
+            let key_with_offset = add_u64x4_scalar(base_key, m.offset);
+            let actual_key_u64 = adjust_privkey_for_endomorphism(&key_with_offset, m.endo_type);
             let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
 
             // npub を計算（検証用）

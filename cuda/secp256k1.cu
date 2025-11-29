@@ -38,6 +38,30 @@ __constant__ uint64_t _Gy[4] = {
 };
 
 // ============================================================================
+// Endomorphism Constants (for 3x speedup)
+// ============================================================================
+// secp256k1 has a special endomorphism: φ(x, y) = (β*x, y) where β³ = 1 mod p
+// This allows checking 3 pubkeys (P, β*P, β²*P) with one scalar multiplication
+
+// β = cube root of unity mod p
+// 0x7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee
+__constant__ uint64_t _Beta[4] = {
+    0xc1396c28719501eeULL,
+    0x9cf0497512f58995ULL,
+    0x6e64479eac3434e9ULL,
+    0x7ae96a2b657c0710ULL
+};
+
+// β² = β * β mod p
+// 0x851695d49a83f8ef919e7886e0bdd3e85495e3cfd41a72c497f8e6a5d31e6dfe
+__constant__ uint64_t _Beta2[4] = {
+    0x97f8e6a5d31e6dfeULL,
+    0x5495e3cfd41a72c4ULL,
+    0x919e7886e0bdd3e8ULL,
+    0x851695d49a83f8efULL
+};
+
+// ============================================================================
 // 256-bit Arithmetic Helper Functions (Device Functions)
 // ============================================================================
 
@@ -1314,6 +1338,9 @@ extern "C" __global__ void test_point_add_mixed(
  * This kernel combines Montgomery's Trick with prefix matching,
  * returning only the keys that match the specified prefixes.
  *
+ * Uses secp256k1 endomorphism for 3x speedup:
+ *   For each pubkey P=(x,y), also checks β*x and β²*x (3 pubkeys per computation)
+ *
  * Input:
  *   - base_keys: starting private keys [num_threads * 4]
  *   - patterns: prefix bit patterns [num_prefixes] (upper bits of u64)
@@ -1327,6 +1354,7 @@ extern "C" __global__ void test_point_add_mixed(
  *   - matched_base_idx: thread index of matched keys [max_matches]
  *   - matched_offset: key offset within thread [max_matches]
  *   - matched_pubkeys_x: x-coordinates of matched pubkeys [max_matches * 4]
+ *   - matched_endo_type: endomorphism type (0=original, 1=β, 2=β²) [max_matches]
  *   - match_count: number of matches found (atomic counter)
  */
 extern "C" __global__ void generate_pubkeys_with_prefix_match(
@@ -1337,6 +1365,7 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
     uint64_t* matched_pubkeys_x,
+    uint32_t* matched_endo_type,
     uint32_t* match_count,
     uint32_t num_threads,
     uint32_t keys_per_thread,
@@ -1422,23 +1451,34 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
         uint64_t x[4];
         _ModMult(X_arr[i], Z_inv_squared, x);
 
-        // === Prefix matching ===
-        // x[3] is the most significant 64 bits (little-endian limbs)
-        uint64_t x_upper = x[3];
+        // === Endomorphism: compute β*x and β²*x for 3x speedup ===
+        uint64_t x_beta[4], x_beta2[4];
+        _ModMult(x, _Beta, x_beta);
+        _ModMult(x, _Beta2, x_beta2);
 
-        // Check against all prefixes
-        for (uint32_t p = 0; p < num_prefixes; p++) {
-            if ((x_upper & masks[p]) == (patterns[p] & masks[p])) {
-                // Match found! Atomically reserve output slot
-                uint32_t slot = atomicAdd(match_count, 1);
-                if (slot < max_matches) {
-                    matched_base_idx[slot] = idx;
-                    matched_offset[slot] = i;
-                    for (int j = 0; j < 4; j++) {
-                        matched_pubkeys_x[slot * 4 + j] = x[j];
+        // Collect all 3 x-coordinates for prefix matching
+        uint64_t* x_coords[3] = { x, x_beta, x_beta2 };
+
+        // === Prefix matching (check all 3 endomorphism variants) ===
+        bool found = false;
+        for (uint32_t endo = 0; endo < 3 && !found; endo++) {
+            uint64_t x_upper = x_coords[endo][3];  // Most significant 64 bits
+
+            for (uint32_t p = 0; p < num_prefixes; p++) {
+                if ((x_upper & masks[p]) == (patterns[p] & masks[p])) {
+                    // Match found! Atomically reserve output slot
+                    uint32_t slot = atomicAdd(match_count, 1);
+                    if (slot < max_matches) {
+                        matched_base_idx[slot] = idx;
+                        matched_offset[slot] = i;
+                        matched_endo_type[slot] = endo;  // 0=original, 1=β, 2=β²
+                        for (int j = 0; j < 4; j++) {
+                            matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
+                        }
                     }
+                    found = true;
+                    break;  // Only count once per key
                 }
-                break;  // Only count once per key (even if multiple prefixes match)
             }
         }
 

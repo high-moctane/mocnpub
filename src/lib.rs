@@ -113,6 +113,7 @@ const BECH32_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 ///
 /// # Example
 /// ```
+/// use mocnpub_main::prefix_to_bits;
 /// let (pattern, mask, bit_len) = prefix_to_bits("m0");
 /// // 'm' = 27 (11011), '0' = 15 (01111)
 /// // pattern = 0b11011_01111_000...0 (上位 10 bit)
@@ -194,6 +195,240 @@ pub fn add_u64x4_scalar(base: &[u64; 4], offset: u32) -> [u64; 4] {
     }
 
     result
+}
+
+// =============================================================================
+// Endomorphism Support (for 3x speedup)
+// =============================================================================
+
+/// secp256k1 group order n
+/// n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+const N: [u64; 4] = [
+    0xBFD25E8CD0364141,
+    0xBAAEDCE6AF48A03B,
+    0xFFFFFFFFFFFFFFFE,
+    0xFFFFFFFFFFFFFFFF,
+];
+
+/// λ = cube root of unity mod n (for endomorphism)
+/// λ = 0x5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72
+const LAMBDA: [u64; 4] = [
+    0xdf02967c1b23bd72,
+    0x122e22ea20816678,
+    0xa5261c028812645a,
+    0x5363ad4cc05c30e0,
+];
+
+/// λ² = λ * λ mod n
+/// λ² = 0xac9c52b33fa3cf1f5ad9e3fd77ed9ba4a880b9fc8ec739c2e0cfc810b51283ce
+const LAMBDA_SQ: [u64; 4] = [
+    0xe0cfc810b51283ce,
+    0xa880b9fc8ec739c2,
+    0x5ad9e3fd77ed9ba4,
+    0xac9c52b33fa3cf1f,
+];
+
+/// Adjust private key for endomorphism
+///
+/// When using endomorphism, we check 3 public keys: P, β*P, β²*P
+/// The corresponding private keys are: k, λ*k, λ²*k (mod n)
+///
+/// # Arguments
+/// * `privkey` - Original private key (base + offset)
+/// * `endo_type` - 0 = original, 1 = λ*k, 2 = λ²*k
+///
+/// # Returns
+/// Adjusted private key as [u64; 4]
+pub fn adjust_privkey_for_endomorphism(privkey: &[u64; 4], endo_type: u32) -> [u64; 4] {
+    match endo_type {
+        0 => *privkey,
+        1 => mod_n_mult(privkey, &LAMBDA),
+        2 => mod_n_mult(privkey, &LAMBDA_SQ),
+        _ => *privkey, // Should never happen
+    }
+}
+
+/// 256-bit multiplication modulo n (secp256k1 group order)
+///
+/// Computes (a * b) mod n using schoolbook multiplication followed by Barrett-like reduction
+fn mod_n_mult(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    // Step 1: 256x256 -> 512-bit multiplication
+    let mut product = [0u64; 8];
+
+    for i in 0..4 {
+        let mut carry = 0u64;
+        for j in 0..4 {
+            let pos = i + j;
+            let (lo, hi) = mul_u64(a[i], b[j]);
+
+            // Add low part
+            let (sum, c1) = product[pos].overflowing_add(lo);
+            let (sum, c2) = sum.overflowing_add(carry);
+            product[pos] = sum;
+            carry = hi + (c1 as u64) + (c2 as u64);
+        }
+        product[i + 4] = product[i + 4].wrapping_add(carry);
+    }
+
+    // Step 2: Reduce mod n
+    reduce_mod_n(&product)
+}
+
+/// Multiply two u64 values, returning (low, high) parts of the 128-bit result
+#[inline]
+fn mul_u64(a: u64, b: u64) -> (u64, u64) {
+    let result = (a as u128) * (b as u128);
+    (result as u64, (result >> 64) as u64)
+}
+
+/// Reduce a 512-bit number modulo n
+///
+/// Uses iterative reduction with the constant k = 2^256 - n
+fn reduce_mod_n(val: &[u64; 8]) -> [u64; 4] {
+    let high = [val[4], val[5], val[6], val[7]];
+
+    // If high part is non-zero, we need to reduce
+    if high != [0, 0, 0, 0] {
+        return reduce_512_mod_n_simple(val);
+    }
+
+    // High part is zero, just check if low >= n
+    let mut result = [val[0], val[1], val[2], val[3]];
+
+    // If result >= n, subtract n
+    while cmp_u64x4(&result, &N) >= 0 {
+        result = sub_u64x4(&result, &N);
+    }
+
+    result
+}
+
+/// Simple 512-bit to 256-bit reduction modulo n
+fn reduce_512_mod_n_simple(val: &[u64; 8]) -> [u64; 4] {
+    // 2^256 - n as [u64; 3] (fits in 129 bits)
+    // = 0x014551231950B75FC4402DA1732FC9BEBF
+    let k: [u64; 3] = [
+        0x402DA1732FC9BEBF,
+        0x4551231950B75FC4,
+        0x0000000000000001,
+    ];
+
+    // Extract low and high 256-bit parts
+    let low = [val[0], val[1], val[2], val[3]];
+    let high = [val[4], val[5], val[6], val[7]];
+
+    // Compute high * k (256-bit * 129-bit = up to 385 bits)
+    // We'll do this carefully
+    let mut product = [0u64; 8];
+    for i in 0..4 {
+        if high[i] == 0 {
+            continue;
+        }
+        let mut carry = 0u128;
+        for j in 0..3 {
+            let pos = i + j;
+            let p = (high[i] as u128) * (k[j] as u128) + (product[pos] as u128) + carry;
+            product[pos] = p as u64;
+            carry = p >> 64;
+        }
+        // Propagate remaining carry
+        let mut pos = i + 3;
+        while carry != 0 && pos < 8 {
+            let sum = (product[pos] as u128) + carry;
+            product[pos] = sum as u64;
+            carry = sum >> 64;
+            pos += 1;
+        }
+    }
+
+    // Add low to product
+    let mut carry = 0u128;
+    for i in 0..4 {
+        let sum = (low[i] as u128) + (product[i] as u128) + carry;
+        product[i] = sum as u64;
+        carry = sum >> 64;
+    }
+    // Propagate carry
+    for i in 4..8 {
+        if carry == 0 {
+            break;
+        }
+        let sum = (product[i] as u128) + carry;
+        product[i] = sum as u64;
+        carry = sum >> 64;
+    }
+
+    // Check if product still has high bits (recursive reduction)
+    let new_high = [product[4], product[5], product[6], product[7]];
+    if new_high != [0, 0, 0, 0] {
+        // Recursively reduce
+        return reduce_512_mod_n_simple(&product);
+    }
+
+    // Final result
+    let mut result = [product[0], product[1], product[2], product[3]];
+
+    // Final reduction: while result >= n, subtract n
+    while cmp_u64x4(&result, &N) >= 0 {
+        result = sub_u64x4(&result, &N);
+    }
+
+    result
+}
+
+/// Wide multiplication of two u128 values, returning (low, high) parts
+#[inline]
+fn wide_mul_u128(a: u128, b: u128) -> (u128, u128) {
+    let a_lo = a as u64 as u128;
+    let a_hi = (a >> 64) as u64 as u128;
+    let b_lo = b as u64 as u128;
+    let b_hi = (b >> 64) as u64 as u128;
+
+    let p0 = a_lo * b_lo;
+    let p1 = a_lo * b_hi;
+    let p2 = a_hi * b_lo;
+    let p3 = a_hi * b_hi;
+
+    let (mid, carry) = p1.overflowing_add(p2);
+    let carry = carry as u128;
+
+    let (lo, c) = p0.overflowing_add(mid << 64);
+    let hi = p3 + (mid >> 64) + (carry << 64) + c as u128;
+
+    (lo, hi)
+}
+
+/// Compare two [u64; 4] values: returns -1, 0, or 1
+fn cmp_u64x4(a: &[u64; 4], b: &[u64; 4]) -> i32 {
+    for i in (0..4).rev() {
+        if a[i] > b[i] {
+            return 1;
+        }
+        if a[i] < b[i] {
+            return -1;
+        }
+    }
+    0
+}
+
+/// Subtract two [u64; 4] values: a - b (assumes a >= b)
+fn sub_u64x4(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let mut result = [0u64; 4];
+    let mut borrow = 0u64;
+
+    for i in 0..4 {
+        let (diff, b1) = a[i].overflowing_sub(b[i]);
+        let (diff, b2) = diff.overflowing_sub(borrow);
+        result[i] = diff;
+        borrow = (b1 as u64) + (b2 as u64);
+    }
+
+    result
+}
+
+/// Convert [u64; 4] to bytes for scalar (helper function)
+fn u64x4_to_bytes_for_scalar(val: &[u64; 4]) -> [u8; 32] {
+    u64x4_to_bytes(val)
 }
 
 // =============================================================================
