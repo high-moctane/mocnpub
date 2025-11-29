@@ -27,7 +27,7 @@ pub fn test_mod_add_gpu(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_mod_add")?;
 
@@ -82,7 +82,7 @@ pub fn test_mod_mult_gpu(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_mod_mult")?;
 
@@ -136,7 +136,7 @@ pub fn test_mod_inv_gpu(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_mod_inv")?;
 
@@ -186,7 +186,7 @@ pub fn test_mod_square_gpu(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_mod_square")?;
 
@@ -240,7 +240,7 @@ pub fn test_point_double_gpu(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_point_double")?;
 
@@ -307,7 +307,7 @@ pub fn test_point_mult_gpu(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_point_mult")?;
 
@@ -381,7 +381,7 @@ pub fn generate_pubkeys_batch(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("generate_pubkeys")?;
 
@@ -465,7 +465,7 @@ pub fn generate_pubkeys_sequential_batch(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("generate_pubkeys_sequential")?;
 
@@ -552,7 +552,7 @@ pub fn generate_pubkeys_sequential_montgomery_batch(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("generate_pubkeys_sequential_montgomery")?;
 
@@ -653,7 +653,7 @@ pub fn generate_pubkeys_with_prefix_match(
     let stream = ctx.default_stream();
 
     // Load PTX module
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("generate_pubkeys_with_prefix_match")?;
 
@@ -753,7 +753,7 @@ pub fn test_point_add_mixed_gpu(
 ) -> Result<([u64; 4], [u64; 4]), Box<dyn std::error::Error>> {
     let stream = ctx.default_stream();
 
-    let ptx_code = include_str!("../cuda/secp256k1.ptx");
+    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
     let module = ctx.load_module(Ptx::from_src(ptx_code))?;
     let kernel = module.load_function("test_point_add_mixed")?;
 
@@ -1049,7 +1049,7 @@ mod tests {
         let stream = ctx.default_stream();
 
         // Load PTX module
-        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
         let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
         let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
 
@@ -1109,7 +1109,7 @@ mod tests {
         let stream = ctx.default_stream();
 
         // Load PTX module
-        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
         let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
         let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
 
@@ -1169,7 +1169,7 @@ mod tests {
         let stream = ctx.default_stream();
 
         // Load PTX module
-        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
         let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
         let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
 
@@ -1375,7 +1375,7 @@ mod tests {
         let stream = ctx.default_stream();
 
         // Load PTX module
-        let ptx_code = include_str!("../cuda/secp256k1.ptx");
+        let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
         let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
         let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
 

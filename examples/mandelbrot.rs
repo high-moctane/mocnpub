@@ -18,8 +18,8 @@ const Y_MAX: f32 = 1.0;
 // 最大反復回数
 const MAX_ITER: u32 = 1000;
 
-// PTX コード（埋め込み）
-const PTX_CODE: &str = include_str!("../mandelbrot.ptx");
+// PTX コード（build.rs で自動生成）
+const PTX_CODE: &str = include_str!(concat!(env!("OUT_DIR"), "/mandelbrot.ptx"));
 
 /// ピクセル座標を複素数平面の座標に変換
 fn pixel_to_complex(px: u32, py: u32) -> Complex64 {
