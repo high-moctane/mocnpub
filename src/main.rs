@@ -48,6 +48,14 @@ struct Args {
     /// GPU バッチサイズ（デフォルト: 65536）
     #[arg(long, default_value = "65536")]
     batch_size: usize,
+
+    /// GPU スレッド数/ブロック（デフォルト: 64）
+    #[arg(long, default_value = "64")]
+    threads_per_block: u32,
+
+    /// スレッドあたりの鍵生成数（デフォルト: 256、max: 512）
+    #[arg(long, default_value = "256")]
+    keys_per_thread: u32,
 }
 
 fn main() -> io::Result<()> {
@@ -81,8 +89,16 @@ fn main() -> io::Result<()> {
     if args.gpu {
         println!("Mode: GPU (CUDA) 🚀");
         println!("Batch size: {}", args.batch_size);
+        println!("Threads/block: {}, Keys/thread: {}", args.threads_per_block, args.keys_per_thread);
         println!("Limit: {}\n", if args.limit == 0 { "無限".to_string() } else { args.limit.to_string() });
-        return run_gpu_mining(&prefixes, args.limit, args.batch_size, args.output.as_deref());
+        return run_gpu_mining(
+            &prefixes,
+            args.limit,
+            args.batch_size,
+            args.threads_per_block,
+            args.keys_per_thread,
+            args.output.as_deref(),
+        );
     }
 
     println!("Mode: CPU");
@@ -270,6 +286,8 @@ fn run_gpu_mining(
     prefixes: &[String],
     limit: usize,
     batch_size: usize,
+    threads_per_block: u32,
+    keys_per_thread: u32,
     output_path: Option<&str>,
 ) -> io::Result<()> {
     // GPU 初期化
@@ -283,7 +301,6 @@ fn run_gpu_mining(
     println!("✅ GPU initialized successfully!");
 
     // SM 数を取得して batch_size を最適化（Tail Effect 対策）
-    let threads_per_block = 64u32;
     let sm_count = match get_sm_count(&ctx) {
         Ok(count) => count,
         Err(e) => {
@@ -329,7 +346,6 @@ fn run_gpu_mining(
     };
 
     // パラメータ設定
-    let keys_per_thread: u32 = 256;  // Montgomery's Trick の最大効率
     let max_matches: u32 = 1000;     // 余裕を持って
 
     // 秘密鍵のバッファ（base keys）
@@ -351,6 +367,7 @@ fn run_gpu_mining(
             keys_per_thread,
             &prefix_bits,
             max_matches,
+            threads_per_block,
         ) {
             Ok(result) => result,
             Err(e) => {

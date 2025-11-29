@@ -577,8 +577,8 @@ pub fn generate_pubkeys_sequential_montgomery_batch(
         return Ok(vec![]);
     }
 
-    // Clamp to max 256 (CUDA kernel limit)
-    let keys_per_thread = keys_per_thread.min(256);
+    // Clamp to max 512 (CUDA kernel limit)
+    let keys_per_thread = keys_per_thread.min(512);
     let total_keys = num_threads * keys_per_thread as usize;
 
     // Get default stream
@@ -659,9 +659,10 @@ pub struct GpuMatch {
 /// # Arguments
 /// * `ctx` - GPU context
 /// * `base_keys` - Starting private keys for each thread
-/// * `keys_per_thread` - Number of consecutive keys each thread generates (max 256)
+/// * `keys_per_thread` - Number of consecutive keys each thread generates (max 512)
 /// * `prefix_bits` - Prefix patterns and masks: Vec<(pattern, mask, bit_len)>
 /// * `max_matches` - Maximum number of matches to return
+/// * `threads_per_block` - Number of threads per block (typically 32, 64, 128, or 256)
 ///
 /// # Returns
 /// * `Vec<GpuMatch>` - Matching keys with their indices and public keys
@@ -671,6 +672,7 @@ pub fn generate_pubkeys_with_prefix_match(
     keys_per_thread: u32,
     prefix_bits: &[(u64, u64, u32)],
     max_matches: u32,
+    threads_per_block: u32,
 ) -> Result<Vec<GpuMatch>, Box<dyn std::error::Error>> {
     let num_threads = base_keys.len();
     let num_prefixes = prefix_bits.len();
@@ -679,8 +681,8 @@ pub fn generate_pubkeys_with_prefix_match(
         return Ok(vec![]);
     }
 
-    // Clamp to max 256 (CUDA kernel limit)
-    let keys_per_thread = keys_per_thread.min(256);
+    // Clamp to max 512 (CUDA kernel limit)
+    let keys_per_thread = keys_per_thread.min(512);
 
     // Get default stream
     let stream = ctx.default_stream();
@@ -714,8 +716,7 @@ pub fn generate_pubkeys_with_prefix_match(
     stream.memcpy_htod(&patterns, &mut patterns_dev)?;
     stream.memcpy_htod(&masks, &mut masks_dev)?;
 
-    // Calculate grid and block dimensions
-    let threads_per_block = 64u32;
+    // Calculate grid and block dimensions (threads_per_block is now a parameter)
     let num_blocks = (num_threads as u32 + threads_per_block - 1) / threads_per_block;
 
     let config = LaunchConfig {
@@ -1874,12 +1875,14 @@ mod tests {
 
         let max_matches = 1000u32;
 
+        let threads_per_block = 64u32;
         let matches = generate_pubkeys_with_prefix_match(
             &ctx,
             &base_keys,
             keys_per_thread,
             &prefix_bits,
             max_matches,
+            threads_per_block,
         ).expect("GPU prefix match failed");
 
         println!("\nGPU Prefix Match Test:");
@@ -1926,12 +1929,14 @@ mod tests {
 
         let max_matches = 2000u32;
 
+        let threads_per_block = 64u32;
         let matches = generate_pubkeys_with_prefix_match(
             &ctx,
             &base_keys,
             keys_per_thread,
             &prefix_bits,
             max_matches,
+            threads_per_block,
         ).expect("GPU prefix match failed");
 
         println!("\nGPU Multiple Prefix Match Test:");
@@ -1979,12 +1984,14 @@ mod tests {
 
         let max_matches = 100u32;
 
+        let threads_per_block = 64u32;
         let matches = generate_pubkeys_with_prefix_match(
             &ctx,
             &base_keys,
             keys_per_thread,
             &prefix_bits,
             max_matches,
+            threads_per_block,
         ).expect("GPU prefix match failed");
 
         println!("\nGPU Longer Prefix Match Test:");
