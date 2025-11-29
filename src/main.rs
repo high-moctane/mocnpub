@@ -49,8 +49,8 @@ struct Args {
     #[arg(long, default_value = "65536")]
     batch_size: usize,
 
-    /// GPU スレッド数/ブロック（デフォルト: 64）
-    #[arg(long, default_value = "64")]
+    /// GPU スレッド数/ブロック（デフォルト: 128、RTX 5070 Ti 向け最適値）
+    #[arg(long, default_value = "128")]
     threads_per_block: u32,
 
     /// スレッドあたりの鍵生成数（デフォルト: 1408、RTX 5070 Ti 向け最適値）
