@@ -53,8 +53,8 @@ struct Args {
     #[arg(long, default_value = "64")]
     threads_per_block: u32,
 
-    /// スレッドあたりの鍵生成数（デフォルト: 256、max: 4096）
-    #[arg(long, default_value = "256")]
+    /// スレッドあたりの鍵生成数（デフォルト: 1408、RTX 5070 Ti 向け最適値）
+    #[arg(long, default_value = "1408")]
     keys_per_thread: u32,
 }
 
