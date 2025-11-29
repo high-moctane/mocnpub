@@ -5,6 +5,7 @@
  */
 
 use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg};
+use cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT;
 use cudarc::nvrtc::Ptx;
 use std::sync::Arc;
 
@@ -13,6 +14,38 @@ pub fn init_gpu() -> Result<Arc<CudaContext>, Box<dyn std::error::Error>> {
     // Get GPU context (already returns Arc<CudaContext>)
     let ctx = CudaContext::new(0)?;
     Ok(ctx)
+}
+
+/// Get the number of Streaming Multiprocessors (SM) on the GPU
+///
+/// This is used to optimize grid size to avoid Tail Effect
+/// (idle SMs in the last wave of execution)
+pub fn get_sm_count(ctx: &Arc<CudaContext>) -> Result<u32, Box<dyn std::error::Error>> {
+    let sm_count = ctx.attribute(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)?;
+    Ok(sm_count as u32)
+}
+
+/// Calculate optimal batch size that is a multiple of (SM count × threads_per_block)
+///
+/// This ensures that all waves of GPU execution fully utilize all SMs,
+/// avoiding the "Tail Effect" where the last wave has idle SMs.
+///
+/// # Arguments
+/// * `ctx` - CUDA context
+/// * `desired_batch_size` - User-requested batch size
+/// * `threads_per_block` - Threads per block (typically 64 for this kernel)
+///
+/// # Returns
+/// * Adjusted batch size (rounded up to nearest wave boundary)
+pub fn calculate_optimal_batch_size(
+    ctx: &Arc<CudaContext>,
+    desired_batch_size: usize,
+    threads_per_block: u32,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let sm_count = get_sm_count(ctx)?;
+    let threads_per_wave = (sm_count * threads_per_block) as usize;
+    let waves = (desired_batch_size + threads_per_wave - 1) / threads_per_wave;
+    Ok(waves * threads_per_wave)
 }
 
 /// Test modular addition on GPU

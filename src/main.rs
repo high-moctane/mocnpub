@@ -11,7 +11,7 @@ use std::sync::{mpsc, Arc};
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
 use mocnpub_main::{bytes_to_u64x4, u64x4_to_bytes, pubkey_bytes_to_npub};
 use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar, adjust_privkey_for_endomorphism};
-use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match};
+use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match, get_sm_count, calculate_optimal_batch_size};
 
 /// Nostr npub マイニングツール 🔑
 ///
@@ -281,6 +281,33 @@ fn run_gpu_mining(
         }
     };
     println!("✅ GPU initialized successfully!");
+
+    // SM 数を取得して batch_size を最適化（Tail Effect 対策）
+    let threads_per_block = 64u32;
+    let sm_count = match get_sm_count(&ctx) {
+        Ok(count) => count,
+        Err(e) => {
+            eprintln!("⚠️ Could not get SM count: {}, using default batch_size", e);
+            0
+        }
+    };
+
+    let batch_size = if sm_count > 0 {
+        match calculate_optimal_batch_size(&ctx, batch_size, threads_per_block) {
+            Ok(adjusted) => {
+                if adjusted != batch_size {
+                    println!("📐 SM count: {}, adjusted batch_size: {} → {} (Tail Effect対策)",
+                             sm_count, batch_size, adjusted);
+                } else {
+                    println!("📐 SM count: {}, batch_size: {} (already optimal)", sm_count, batch_size);
+                }
+                adjusted
+            }
+            Err(_) => batch_size,
+        }
+    } else {
+        batch_size
+    };
 
     // prefix を bit パターンに変換（事前計算）
     let prefix_bits = prefixes_to_bits(prefixes);
