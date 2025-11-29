@@ -1357,7 +1357,7 @@ extern "C" __global__ void test_point_add_mixed(
  *   - matched_endo_type: endomorphism type (0=original, 1=β, 2=β²) [max_matches]
  *   - match_count: number of matches found (atomic counter)
  */
-extern "C" __global__ __launch_bounds__(64, 16) void generate_pubkeys_with_prefix_match(
+extern "C" __global__ void generate_pubkeys_with_prefix_match(
     const uint64_t* base_keys,
     const uint64_t* patterns,
     const uint64_t* masks,
