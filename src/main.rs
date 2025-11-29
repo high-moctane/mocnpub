@@ -9,9 +9,9 @@ use std::sync::{mpsc, Arc};
 
 // lib.rs から共通関数を import
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
-use mocnpub_main::{u64x4_to_bytes, pubkey_bytes_to_npub};
-use mocnpub_main::prefixes_to_bits;
-use mocnpub_main::gpu::{init_gpu, generate_and_match_curand};
+use mocnpub_main::{bytes_to_u64x4, u64x4_to_bytes, pubkey_bytes_to_npub};
+use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar};
+use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match};
 
 /// Nostr npub マイニングツール 🔑
 ///
@@ -265,7 +265,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// GPU マイニングモード（cuRAND で GPU 側秘密鍵生成 + prefix マッチング）
+/// GPU マイニングモード（GPU 側 prefix マッチング）
 fn run_gpu_mining(
     prefixes: &[String],
     limit: usize,
@@ -281,7 +281,6 @@ fn run_gpu_mining(
         }
     };
     println!("✅ GPU initialized successfully!");
-    println!("🎲 Using cuRAND for GPU-side key generation!");
 
     // prefix を bit パターンに変換（事前計算）
     let prefix_bits = prefixes_to_bits(prefixes);
@@ -306,16 +305,22 @@ fn run_gpu_mining(
     let keys_per_thread: u32 = 256;  // Montgomery's Trick の最大効率
     let max_matches: u32 = 1000;     // 余裕を持って
 
+    // 秘密鍵のバッファ（base keys）
+    let mut privkey_bytes: Vec<[u8; 32]> = vec![[0u8; 32]; batch_size];
+    let mut privkeys_u64: Vec<[u64; 4]> = vec![[0u64; 4]; batch_size];
+
     // メインループ
     loop {
-        // 1. バッチごとに新しい seed を生成（CPU で seed だけ生成）
-        let seed = rng.next_u64();
+        // 1. ランダムな base keys を生成（CPU）
+        for i in 0..batch_size {
+            rng.fill_bytes(&mut privkey_bytes[i]);
+            privkeys_u64[i] = bytes_to_u64x4(&privkey_bytes[i]);
+        }
 
-        // 2. GPU で秘密鍵生成 + 公開鍵生成 + prefix マッチング
-        let matches = match generate_and_match_curand(
+        // 2. GPU で公開鍵生成 + prefix マッチング
+        let matches = match generate_pubkeys_with_prefix_match(
             &ctx,
-            seed,
-            batch_size,
+            &privkeys_u64,
             keys_per_thread,
             &prefix_bits,
             max_matches,
@@ -334,8 +339,10 @@ fn run_gpu_mining(
         for m in matches {
             found_count += 1;
 
-            // 秘密鍵は GPU から直接取得（cuRAND で生成済み）
-            let actual_key_bytes = u64x4_to_bytes(&m.seckey);
+            // 秘密鍵を復元: base_key + offset
+            let base_key = &privkeys_u64[m.base_idx as usize];
+            let actual_key_u64 = add_u64x4_scalar(base_key, m.offset);
+            let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
 
             // npub を計算（検証用）
             let npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
@@ -364,7 +371,7 @@ fn run_gpu_mining(
 
             // 結果を整形
             let output_text = format!(
-                "✅ {}個目が見つかりました！（{}回試行、cuRAND + GPU prefix match）\n\
+                "✅ {}個目が見つかりました！（{}回試行、GPU prefix match）\n\
                  マッチした prefix: '{}'\n\n\
                  経過時間: {:.2}秒\n\
                  パフォーマンス: {:.2} keys/sec\n\n\
