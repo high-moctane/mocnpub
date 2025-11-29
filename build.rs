@@ -54,7 +54,7 @@ fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf) {
     // PTX は前方互換性があるので、古いアーキテクチャで生成しても
     // JIT コンパイル時に適切なアーキテクチャにコンパイルされる
     // 注意: CUDA 13.0 では sm_75 (Turing) が最小サポートアーキテクチャ
-    let arch = "sm_75"; // Turing 以降で動作する設定（RTX 20 シリーズ以降）
+    let arch = "sm_120"; // Blackwell（RTX 50 シリーズ）
 
     // Windows の場合、cl.exe に UTF-8 として解釈させるオプションを追加
     let mut args = vec![
