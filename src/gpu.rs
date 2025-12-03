@@ -659,6 +659,8 @@ pub struct GpuMatch {
 /// # Arguments
 /// * `ctx` - GPU context
 /// * `base_keys` - Starting private keys for each thread
+/// * `pubkeys_x` - Initial public key X coordinates (CPU precomputed)
+/// * `pubkeys_y` - Initial public key Y coordinates (CPU precomputed)
 /// * `keys_per_thread` - Number of consecutive keys each thread generates (max 512)
 /// * `prefix_bits` - Prefix patterns and masks: Vec<(pattern, mask, bit_len)>
 /// * `max_matches` - Maximum number of matches to return
@@ -669,6 +671,8 @@ pub struct GpuMatch {
 pub fn generate_pubkeys_with_prefix_match(
     ctx: &Arc<CudaContext>,
     base_keys: &[[u64; 4]],
+    pubkeys_x: &[[u64; 4]],
+    pubkeys_y: &[[u64; 4]],
     keys_per_thread: u32,
     prefix_bits: &[(u64, u64, u32)],
     max_matches: u32,
@@ -695,12 +699,18 @@ pub fn generate_pubkeys_with_prefix_match(
     // Flatten base keys to Vec<u64>
     let base_keys_flat: Vec<u64> = base_keys.iter().flat_map(|k| k.iter().copied()).collect();
 
+    // Flatten public keys (CPU precomputed) to Vec<u64>
+    let pubkeys_x_flat: Vec<u64> = pubkeys_x.iter().flat_map(|k| k.iter().copied()).collect();
+    let pubkeys_y_flat: Vec<u64> = pubkeys_y.iter().flat_map(|k| k.iter().copied()).collect();
+
     // Prepare prefix patterns and masks
     let patterns: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
     let masks: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
 
     // Allocate device memory for inputs
     let mut base_keys_dev = stream.alloc_zeros::<u64>(num_threads * 4)?;
+    let mut pubkeys_x_dev = stream.alloc_zeros::<u64>(num_threads * 4)?;
+    let mut pubkeys_y_dev = stream.alloc_zeros::<u64>(num_threads * 4)?;
     let mut patterns_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
     let mut masks_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
 
@@ -713,6 +723,8 @@ pub fn generate_pubkeys_with_prefix_match(
 
     // Copy inputs to device
     stream.memcpy_htod(&base_keys_flat, &mut base_keys_dev)?;
+    stream.memcpy_htod(&pubkeys_x_flat, &mut pubkeys_x_dev)?;
+    stream.memcpy_htod(&pubkeys_y_flat, &mut pubkeys_y_dev)?;
     stream.memcpy_htod(&patterns, &mut patterns_dev)?;
     stream.memcpy_htod(&masks, &mut masks_dev)?;
 
@@ -730,6 +742,8 @@ pub fn generate_pubkeys_with_prefix_match(
     let num_prefixes_u32 = num_prefixes as u32;
     let mut builder = stream.launch_builder(&kernel);
     builder.arg(&mut base_keys_dev);
+    builder.arg(&mut pubkeys_x_dev);  // CPU precomputed public key X
+    builder.arg(&mut pubkeys_y_dev);  // CPU precomputed public key Y
     builder.arg(&mut patterns_dev);
     builder.arg(&mut masks_dev);
     builder.arg(&num_prefixes_u32);

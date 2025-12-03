@@ -92,6 +92,31 @@ pub fn seckey_to_nsec(seckey: &SecretKey) -> String {
 }
 
 // =============================================================================
+// 公開鍵座標の取得（CPU 公開鍵プリコンピュート戦法用）
+// =============================================================================
+
+/// 公開鍵から X, Y 座標を [u64; 4] 形式で取得
+///
+/// GPU に初期公開鍵を渡すために使用（_PointMult をスキップ）
+/// - 入力: secp256k1::PublicKey
+/// - 出力: (X座標, Y座標) を little-endian limbs で
+pub fn pubkey_to_xy_u64x4(pubkey: &PublicKey) -> ([u64; 4], [u64; 4]) {
+    // 非圧縮形式で取得（65バイト: 0x04 + X[32] + Y[32]）
+    let uncompressed = pubkey.serialize_uncompressed();
+
+    // X座標: byte[1..33]
+    let mut x_bytes = [0u8; 32];
+    x_bytes.copy_from_slice(&uncompressed[1..33]);
+
+    // Y座標: byte[33..65]
+    let mut y_bytes = [0u8; 32];
+    y_bytes.copy_from_slice(&uncompressed[33..65]);
+
+    // [u64; 4] 形式に変換
+    (bytes_to_u64x4(&x_bytes), bytes_to_u64x4(&y_bytes))
+}
+
+// =============================================================================
 // Prefix → Bit列変換（GPU での高速マッチング用）
 // =============================================================================
 

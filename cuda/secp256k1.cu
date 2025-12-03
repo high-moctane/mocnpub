@@ -1433,6 +1433,8 @@ extern "C" __global__ void test_point_add_mixed(
  */
 extern "C" __global__ void generate_pubkeys_with_prefix_match(
     const uint64_t* base_keys,
+    const uint64_t* pubkeys_x,      // CPU precomputed public key X coordinates
+    const uint64_t* pubkeys_y,      // CPU precomputed public key Y coordinates
     const uint64_t* patterns,
     const uint64_t* masks,
     uint32_t num_prefixes,
@@ -1459,7 +1461,7 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
     uint32_t n = keys_per_thread;
     if (n > MAX_KEYS_PER_THREAD) n = MAX_KEYS_PER_THREAD;
 
-    // Load base private key
+    // Load base private key (still needed for returning matched keys)
     uint64_t k[4];
     for (int i = 0; i < 4; i++) {
         k[i] = base_keys[idx * 4 + i];
@@ -1467,9 +1469,14 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
 
     // === Phase 1: Generate all points in Jacobian coordinates ===
 
-    // First point: P = k * G (heavy operation)
+    // First point: Load from CPU precomputed (skip _PointMult!)
     uint64_t Px[4], Py[4], Pz[4];
-    _PointMult(k, _Gx, _Gy, Px, Py, Pz);
+    for (int i = 0; i < 4; i++) {
+        Px[i] = pubkeys_x[idx * 4 + i];
+        Py[i] = pubkeys_y[idx * 4 + i];
+    }
+    // Z = 1 for affine coordinates (CPU provides affine coordinates)
+    Pz[0] = 1; Pz[1] = 0; Pz[2] = 0; Pz[3] = 0;
 
     // Store first point
     for (int i = 0; i < 4; i++) {

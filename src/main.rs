@@ -11,6 +11,7 @@ use std::sync::{mpsc, Arc};
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
 use mocnpub_main::{bytes_to_u64x4, u64x4_to_bytes, pubkey_bytes_to_npub};
 use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar, adjust_privkey_for_endomorphism};
+use mocnpub_main::pubkey_to_xy_u64x4;
 use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match, get_sm_count, calculate_optimal_batch_size};
 
 /// Nostr npub マイニングツール 🔑
@@ -348,22 +349,36 @@ fn run_gpu_mining(
     // パラメータ設定
     let max_matches: u32 = 1000;     // 余裕を持って
 
-    // 秘密鍵のバッファ（base keys）
+    // 秘密鍵と公開鍵のバッファ（CPU 公開鍵プリコンピュート戦法）
     let mut privkey_bytes: Vec<[u8; 32]> = vec![[0u8; 32]; batch_size];
     let mut privkeys_u64: Vec<[u64; 4]> = vec![[0u64; 4]; batch_size];
+    let mut pubkeys_x_u64: Vec<[u64; 4]> = vec![[0u64; 4]; batch_size];
+    let mut pubkeys_y_u64: Vec<[u64; 4]> = vec![[0u64; 4]; batch_size];
+
+    // secp256k1 コンテキスト（公開鍵計算用）
+    let secp = Secp256k1::new();
 
     // メインループ
     loop {
-        // 1. ランダムな base keys を生成（CPU）
+        // 1. ランダムな base keys を生成し、公開鍵も計算（CPU）
         for i in 0..batch_size {
             rng.fill_bytes(&mut privkey_bytes[i]);
             privkeys_u64[i] = bytes_to_u64x4(&privkey_bytes[i]);
+
+            // CPU で公開鍵を計算（GPU 側の _PointMult をスキップするため）
+            let sk = SecretKey::from_slice(&privkey_bytes[i]).expect("valid secret key");
+            let pk = sk.public_key(&secp);
+            let (x, y) = pubkey_to_xy_u64x4(&pk);
+            pubkeys_x_u64[i] = x;
+            pubkeys_y_u64[i] = y;
         }
 
         // 2. GPU で公開鍵生成 + prefix マッチング
         let matches = match generate_pubkeys_with_prefix_match(
             &ctx,
             &privkeys_u64,
+            &pubkeys_x_u64,
+            &pubkeys_y_u64,
             keys_per_thread,
             &prefix_bits,
             max_matches,
