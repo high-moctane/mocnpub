@@ -65,6 +65,8 @@ fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf) {
         format!("-arch={}", arch),
         // Visual Studio 2026 など新しいバージョンでもコンパイルできるように
         "-allow-unsupported-compiler".to_string(),
+        // ソースレベルのプロファイリング用（ncu-ui で行番号を表示）
+        "-lineinfo".to_string(),
     ];
 
     // Windows では cl.exe に UTF-8 オプションを渡す
