@@ -681,8 +681,8 @@ pub fn generate_pubkeys_with_prefix_match(
         return Ok(vec![]);
     }
 
-    // SoA version: no MAX_KEYS_PER_THREAD limit (limited only by VRAM)
-    // Note: Work buffer size = 4 * num_threads * keys_per_thread * 4 buffers * 8 bytes
+    // Clamp to max 4096 (CUDA kernel limit)
+    let keys_per_thread = keys_per_thread.min(4096);
 
     // Get default stream
     let stream = ctx.default_stream();
@@ -710,14 +710,6 @@ pub fn generate_pubkeys_with_prefix_match(
     let mut matched_pubkeys_x_dev = stream.alloc_zeros::<u64>(max_matches as usize * 4)?;
     let mut matched_endo_type_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
     let mut match_count_dev = stream.alloc_zeros::<u32>(1)?;
-
-    // Allocate SoA work buffers for coalesced memory access
-    // Each buffer: 4 limbs * num_threads * keys_per_thread
-    let work_buffer_size = 4 * num_threads * keys_per_thread as usize;
-    let mut work_x_dev = stream.alloc_zeros::<u64>(work_buffer_size)?;
-    let mut work_y_dev = stream.alloc_zeros::<u64>(work_buffer_size)?;
-    let mut work_z_dev = stream.alloc_zeros::<u64>(work_buffer_size)?;
-    let mut work_c_dev = stream.alloc_zeros::<u64>(work_buffer_size)?;
 
     // Copy inputs to device
     stream.memcpy_htod(&base_keys_flat, &mut base_keys_dev)?;
@@ -749,11 +741,6 @@ pub fn generate_pubkeys_with_prefix_match(
     builder.arg(&num_threads_u32);
     builder.arg(&keys_per_thread);
     builder.arg(&max_matches);
-    // SoA work buffers
-    builder.arg(&mut work_x_dev);
-    builder.arg(&mut work_y_dev);
-    builder.arg(&mut work_z_dev);
-    builder.arg(&mut work_c_dev);
     unsafe {
         builder.launch(config)?;
     }
