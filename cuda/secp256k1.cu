@@ -1443,21 +1443,23 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
     uint32_t* match_count,
     uint32_t num_threads,
     uint32_t keys_per_thread,
-    uint32_t max_matches
+    uint32_t max_matches,
+    // SoA work buffers (global memory, coalesced access pattern)
+    uint64_t* work_X,   // [4 * num_threads * keys_per_thread]
+    uint64_t* work_Y,   // [4 * num_threads * keys_per_thread]
+    uint64_t* work_Z,   // [4 * num_threads * keys_per_thread]
+    uint64_t* work_c    // [4 * num_threads * keys_per_thread]
 )
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_threads) return;
 
-    // Local arrays for storing intermediate Jacobian coordinates
-    uint64_t X_arr[MAX_KEYS_PER_THREAD][4];
-    uint64_t Y_arr[MAX_KEYS_PER_THREAD][4];
-    uint64_t Z_arr[MAX_KEYS_PER_THREAD][4];
-    uint64_t c[MAX_KEYS_PER_THREAD][4];  // Cumulative products
+    // SoA index macro: ensures coalesced memory access
+    // Adjacent threads access adjacent memory addresses
+    #define SOA_IDX(limb, key_idx) ((limb) * num_threads * keys_per_thread + (key_idx) * num_threads + idx)
 
-    // Clamp keys_per_thread to MAX_KEYS_PER_THREAD
+    // No MAX_KEYS_PER_THREAD limit with SoA!
     uint32_t n = keys_per_thread;
-    if (n > MAX_KEYS_PER_THREAD) n = MAX_KEYS_PER_THREAD;
 
     // Load base private key
     uint64_t k[4];
@@ -1471,11 +1473,11 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
     uint64_t Px[4], Py[4], Pz[4];
     _PointMult(k, _Gx, _Gy, Px, Py, Pz);
 
-    // Store first point
+    // Store first point (SoA layout for coalesced access)
     for (int i = 0; i < 4; i++) {
-        X_arr[0][i] = Px[i];
-        Y_arr[0][i] = Py[i];
-        Z_arr[0][i] = Pz[i];
+        work_X[SOA_IDX(i, 0)] = Px[i];
+        work_Y[SOA_IDX(i, 0)] = Py[i];
+        work_Z[SOA_IDX(i, 0)] = Pz[i];
     }
 
     // Generate subsequent points using P = P + G (light operation!)
@@ -1483,37 +1485,58 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
         uint64_t tempX[4], tempY[4], tempZ[4];
         _PointAddMixed(Px, Py, Pz, _Gx, _Gy, tempX, tempY, tempZ);
 
-        // Copy and store
+        // Copy and store (SoA layout for coalesced access)
         for (int i = 0; i < 4; i++) {
             Px[i] = tempX[i];
             Py[i] = tempY[i];
             Pz[i] = tempZ[i];
-            X_arr[key_idx][i] = Px[i];
-            Y_arr[key_idx][i] = Py[i];
-            Z_arr[key_idx][i] = Pz[i];
+            work_X[SOA_IDX(i, key_idx)] = Px[i];
+            work_Y[SOA_IDX(i, key_idx)] = Py[i];
+            work_Z[SOA_IDX(i, key_idx)] = Pz[i];
         }
     }
 
     // === Phase 2: Montgomery's Trick for batch inverse ===
 
     // Step 1: Compute cumulative products
+    // c[0] = Z[0]
     for (int i = 0; i < 4; i++) {
-        c[0][i] = Z_arr[0][i];
+        work_c[SOA_IDX(i, 0)] = work_Z[SOA_IDX(i, 0)];
     }
-    for (uint32_t i = 1; i < n; i++) {
-        _ModMult(c[i-1], Z_arr[i], c[i]);
+    // c[j] = c[j-1] * Z[j]
+    for (uint32_t j = 1; j < n; j++) {
+        // Load from SoA into temp arrays for _ModMult
+        uint64_t c_prev[4], z_curr[4], c_curr[4];
+        for (int i = 0; i < 4; i++) {
+            c_prev[i] = work_c[SOA_IDX(i, j-1)];
+            z_curr[i] = work_Z[SOA_IDX(i, j)];
+        }
+        _ModMult(c_prev, z_curr, c_curr);
+        // Store result back to SoA
+        for (int i = 0; i < 4; i++) {
+            work_c[SOA_IDX(i, j)] = c_curr[i];
+        }
     }
 
     // Step 2: Compute inverse of cumulative product (SINGLE _ModInv!)
+    uint64_t c_last[4];
+    for (int i = 0; i < 4; i++) {
+        c_last[i] = work_c[SOA_IDX(i, n-1)];
+    }
     uint64_t u[4];
-    _ModInv(c[n-1], u);
+    _ModInv(c_last, u);
 
     // Step 3: Compute individual inverses and check prefix match
     for (int32_t i = n - 1; i >= 0; i--) {
         // Z_inv = u * c[i-1] (or just u for i=0)
         uint64_t Z_inv[4];
         if (i > 0) {
-            _ModMult(u, c[i-1], Z_inv);
+            // Load c[i-1] from SoA
+            uint64_t c_prev[4];
+            for (int j = 0; j < 4; j++) {
+                c_prev[j] = work_c[SOA_IDX(j, i-1)];
+            }
+            _ModMult(u, c_prev, Z_inv);
         } else {
             for (int j = 0; j < 4; j++) Z_inv[j] = u[j];
         }
@@ -1522,8 +1545,13 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
         uint64_t Z_inv_squared[4];
         _ModSquare(Z_inv, Z_inv_squared);
 
+        // Load X[i] from SoA
+        uint64_t X_i[4];
+        for (int j = 0; j < 4; j++) {
+            X_i[j] = work_X[SOA_IDX(j, i)];
+        }
         uint64_t x[4];
-        _ModMult(X_arr[i], Z_inv_squared, x);
+        _ModMult(X_i, Z_inv_squared, x);
 
         // === Endomorphism: compute β*x and β²*x for 3x speedup ===
         uint64_t x_beta[4], x_beta2[4];
@@ -1558,11 +1586,18 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
 
         // Update u for next iteration (if not the last)
         if (i > 0) {
+            // Load Z[i] from SoA
+            uint64_t Z_i[4];
+            for (int j = 0; j < 4; j++) {
+                Z_i[j] = work_Z[SOA_IDX(j, i)];
+            }
             uint64_t temp[4];
-            _ModMult(u, Z_arr[i], temp);
+            _ModMult(u, Z_i, temp);
             for (int j = 0; j < 4; j++) {
                 u[j] = temp[j];
             }
         }
     }
+
+    #undef SOA_IDX
 }
