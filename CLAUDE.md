@@ -334,7 +334,7 @@ ncu --set full -o profile .\target\release\mocnpub-main.exe --gpu --prefix 0000 
 | 2 | **MAX_KEYS_PER_THREAD を環境変数で指定** | `build.rs` で取得、nvcc に `-D` で渡す | ✅ 完了 |
 | 3 | **不要な引数の削除** | `--keys-per-thread` 等を廃止、シンプル化 | ✅ 完了 |
 | 4 | **batch_size 最終調整** | 1146880 → 3584000（+1.2%）| ✅ 完了 |
-| 5 | **README 整備** | 使い方、ビルド方法、パフォーマンス情報 | ⬜ 未着手 |
+| 5 | **README 整備** | 使い方、ビルド方法、パフォーマンス情報 | ✅ 完了 |
 
 **実装方針**：
 
