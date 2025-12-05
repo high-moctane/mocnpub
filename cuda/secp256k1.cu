@@ -245,8 +245,8 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     }
 
     // Reduce sum[4]: sum[4] * 2^256 mod p = sum[4] * (2^32 + 977)
-    // This avoids billions of iterations in the reduction loop
-    if (sum[4] > 0) {
+    // Branchless: always compute, result is 0 if sum[4] was 0
+    {
         // Compute sum[4] * (2^32 + 977)
         uint64_t factor = sum[4];
 
@@ -277,7 +277,9 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
 
         uint64_t s1 = sum[1] + add1 + carry2;
         uint64_t new_carry = (s1 < sum[1]) ? 1 : 0;
-        if (add1 + carry2 < add1) new_carry = 1;
+        // Branchless overflow check
+        uint64_t overflow = (add1 + carry2 < add1) ? 1 : 0;
+        new_carry = new_carry | overflow;
         carry2 = new_carry + carry1;
         sum[1] = s1;
 
@@ -317,36 +319,35 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     }
 
     // Now reduce: while temp >= p, subtract p
+    // Branchless implementation to avoid warp divergence
     // At most 2-3 iterations needed
     for (int iter = 0; iter < 3; iter++) {
-        // Check if temp >= p
-        bool ge = false;
-        if (temp[4] > 0) {
-            ge = true;
-        } else {
-            // Compare temp[0..3] with p
-            ge = _Compare256(temp, _P) >= 0;
+        // 1. Always compute temp - p (branchless)
+        uint64_t diff[5];
+        uint64_t borrow = 0;
+        for (int i = 0; i < 4; i++) {
+            // Two-stage subtraction to properly detect borrow
+            uint64_t temp_diff = temp[i] - _P[i];
+            uint64_t borrow1 = (temp[i] < _P[i]) ? 1 : 0;
+
+            uint64_t final_diff = temp_diff - borrow;
+            uint64_t borrow2 = (temp_diff < borrow) ? 1 : 0;
+
+            diff[i] = final_diff;
+            borrow = borrow1 | borrow2;
         }
+        diff[4] = temp[4] - borrow;
 
-        if (ge) {
-            // Subtract p from temp (320-bit - 256-bit)
-            uint64_t borrow = 0;
-            for (int i = 0; i < 4; i++) {
-                // Two-stage subtraction to avoid overflow in borrow detection
-                uint64_t temp_diff = temp[i] - _P[i];
-                uint64_t borrow1 = (temp[i] < _P[i]) ? 1 : 0;
+        // 2. Branchless comparison: ge = (temp >= p)
+        // If temp[4] >= borrow, then temp >= p (no underflow occurred)
+        uint64_t ge = (temp[4] >= borrow) ? 1 : 0;
 
-                uint64_t final_diff = temp_diff - borrow;
-                uint64_t borrow2 = (temp_diff < borrow) ? 1 : 0;
-
-                temp[i] = final_diff;
-                borrow = borrow1 | borrow2;
-            }
-            // Subtract borrow from temp[4]
-            temp[4] -= borrow;
-        } else {
-            break;
+        // 3. Branchless select: temp = ge ? diff : temp
+        uint64_t mask = -(int64_t)ge;  // ge ? 0xFFFF...FFFF : 0
+        for (int i = 0; i < 5; i++) {
+            temp[i] = (diff[i] & mask) | (temp[i] & ~mask);
         }
+        // No break - always iterate 3 times (mask handles the logic)
     }
 
     // Copy result
