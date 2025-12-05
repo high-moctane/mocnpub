@@ -323,12 +323,31 @@ ncu --set full -o profile .\target\release\mocnpub-main.exe --gpu --prefix 0000 
 
 ---
 
-### 将来の最適化計画
+### 次のフェーズ：アプリケーション完成度向上 🎯
 
-| # | 最適化 | 期待効果 | 優先度 |
-|---|--------|----------|--------|
-| 1 | **AoS 版のさらなるチューニング** | batch_size / keys_per_thread の最適値探索 | 中 |
-| 2 | ダブルバッファリング | <1% | 低 |
+**Step 5: 最終チューニング & 完成度向上**
+
+| # | タスク | 目的 | 優先度 |
+|---|--------|------|--------|
+| 1 | **keys_per_thread 固定化** | ビルド時に確定、ループアンローリング期待 | 高 |
+| 2 | **MAX_KEYS_PER_THREAD を環境変数で指定** | `build.rs` で取得、nvcc に `-D` で渡す | 高 |
+| 3 | **不要な引数の削除** | `--keys-per-thread` 等を廃止、シンプル化 | 中 |
+| 4 | **batch_size 最終調整** | デフォルト値の見直し | 中 |
+| 5 | **README 整備** | 使い方、ビルド方法、パフォーマンス情報 | 中 |
+
+**実装方針**：
+
+```bash
+# ビルド時に MAX_KEYS_PER_THREAD を指定
+MAX_KEYS_PER_THREAD=2048 cargo build --release
+```
+
+```rust
+// build.rs で環境変数を読んで nvcc に渡す
+let max_keys = std::env::var("MAX_KEYS_PER_THREAD")
+    .unwrap_or_else(|_| "1408".to_string());
+cmd.arg(format!("-D MAX_KEYS_PER_THREAD={}", max_keys));
+```
 
 ---
 
