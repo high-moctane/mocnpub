@@ -12,6 +12,16 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cuda_dir = manifest_dir.join("cuda");
 
+    // Read MAX_KEYS_PER_THREAD from environment variable (default: 1408)
+    // Rebuild when this env var changes
+    println!("cargo:rerun-if-env-changed=MAX_KEYS_PER_THREAD");
+    let max_keys_per_thread = env::var("MAX_KEYS_PER_THREAD")
+        .unwrap_or_else(|_| "1408".to_string());
+
+    // Pass to Rust code via cargo:rustc-env
+    println!("cargo:rustc-env=MAX_KEYS_PER_THREAD={}", max_keys_per_thread);
+    println!("cargo:warning=MAX_KEYS_PER_THREAD={}", max_keys_per_thread);
+
     // Find nvcc
     let nvcc = find_nvcc().expect(
         "Could not find nvcc. Please ensure CUDA Toolkit is installed and either:\n\
@@ -22,13 +32,13 @@ fn main() {
     println!("cargo:warning=Using nvcc: {}", nvcc.display());
 
     // Compile secp256k1.cu to PTX
-    compile_cu_to_ptx(&nvcc, &cuda_dir.join("secp256k1.cu"), &out_dir);
+    compile_cu_to_ptx(&nvcc, &cuda_dir.join("secp256k1.cu"), &out_dir, &max_keys_per_thread);
 
     // Compile mandelbrot.cu to PTX (in root directory)
-    compile_cu_to_ptx(&nvcc, &manifest_dir.join("mandelbrot.cu"), &out_dir);
+    compile_cu_to_ptx(&nvcc, &manifest_dir.join("mandelbrot.cu"), &out_dir, &max_keys_per_thread);
 }
 
-fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf) {
+fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf, max_keys_per_thread: &str) {
     let file_stem = cu_file.file_stem().unwrap().to_str().unwrap();
     let ptx_file = out_dir.join(format!("{}.ptx", file_stem));
 
@@ -63,6 +73,8 @@ fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf) {
         ptx_file.to_str().unwrap().to_string(),
         cu_file.to_str().unwrap().to_string(),
         format!("-arch={}", arch),
+        // MAX_KEYS_PER_THREAD を定義（環境変数から取得した値）
+        format!("-D MAX_KEYS_PER_THREAD={}", max_keys_per_thread),
         // Visual Studio 2026 など新しいバージョンでもコンパイルできるように
         "-allow-unsupported-compiler".to_string(),
         // ソースレベルのプロファイリング用（ncu-ui で行番号を表示）

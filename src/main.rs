@@ -52,10 +52,12 @@ struct Args {
     /// GPU スレッド数/ブロック（デフォルト: 128、RTX 5070 Ti 向け最適値）
     #[arg(long, default_value = "128")]
     threads_per_block: u32,
+}
 
-    /// スレッドあたりの鍵生成数（デフォルト: 1408、RTX 5070 Ti 向け最適値）
-    #[arg(long, default_value = "1408")]
-    keys_per_thread: u32,
+/// ビルド時に決定される keys_per_thread の値を取得
+/// 環境変数 MAX_KEYS_PER_THREAD で指定可能（デフォルト: 1408）
+fn get_max_keys_per_thread() -> u32 {
+    env!("MAX_KEYS_PER_THREAD").parse().expect("MAX_KEYS_PER_THREAD must be a valid u32")
 }
 
 fn main() -> io::Result<()> {
@@ -87,16 +89,17 @@ fn main() -> io::Result<()> {
 
     // GPU モードか CPU モードかで分岐
     if args.gpu {
+        let keys_per_thread = get_max_keys_per_thread();
         println!("Mode: GPU (CUDA) 🚀");
         println!("Batch size: {}", args.batch_size);
-        println!("Threads/block: {}, Keys/thread: {}", args.threads_per_block, args.keys_per_thread);
+        println!("Threads/block: {}, Keys/thread: {} (build-time)", args.threads_per_block, keys_per_thread);
         println!("Limit: {}\n", if args.limit == 0 { "無限".to_string() } else { args.limit.to_string() });
         return run_gpu_mining(
             &prefixes,
             args.limit,
             args.batch_size,
             args.threads_per_block,
-            args.keys_per_thread,
+            keys_per_thread,
             args.output.as_deref(),
         );
     }

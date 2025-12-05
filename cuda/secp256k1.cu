@@ -1026,7 +1026,10 @@ extern "C" __global__ void generate_pubkeys_sequential(
  * Output:
  *   - pubkeys_x: x-coordinates [num_threads * keys_per_thread * 4]
  */
+// MAX_KEYS_PER_THREAD: ビルド時に -D オプションで指定可能（デフォルト: 1408）
+#ifndef MAX_KEYS_PER_THREAD
 #define MAX_KEYS_PER_THREAD 1408
+#endif
 
 extern "C" __global__ void generate_pubkeys_sequential_montgomery(
     const uint64_t* base_keys,
