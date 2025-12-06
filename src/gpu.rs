@@ -9,6 +9,12 @@ use cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_
 use cudarc::nvrtc::Ptx;
 use std::sync::Arc;
 
+/// Get MAX_KEYS_PER_THREAD (compile-time constant)
+/// This matches the value used in the CUDA kernel.
+pub fn get_max_keys_per_thread() -> u32 {
+    env!("MAX_KEYS_PER_THREAD").parse().expect("MAX_KEYS_PER_THREAD must be a valid u32")
+}
+
 /// Initialize GPU and return context
 pub fn init_gpu() -> Result<Arc<CudaContext>, Box<dyn std::error::Error>> {
     // Get GPU context (already returns Arc<CudaContext>)
@@ -659,17 +665,17 @@ pub struct GpuMatch {
 /// # Arguments
 /// * `ctx` - GPU context
 /// * `base_keys` - Starting private keys for each thread
-/// * `keys_per_thread` - Number of consecutive keys each thread generates (max 512)
 /// * `prefix_bits` - Prefix patterns and masks: Vec<(pattern, mask, bit_len)>
 /// * `max_matches` - Maximum number of matches to return
 /// * `threads_per_block` - Number of threads per block (typically 32, 64, 128, or 256)
+///
+/// Note: keys_per_thread is fixed to MAX_KEYS_PER_THREAD at compile time.
 ///
 /// # Returns
 /// * `Vec<GpuMatch>` - Matching keys with their indices and public keys
 pub fn generate_pubkeys_with_prefix_match(
     ctx: &Arc<CudaContext>,
     base_keys: &[[u64; 4]],
-    keys_per_thread: u32,
     prefix_bits: &[(u64, u64, u32)],
     max_matches: u32,
     threads_per_block: u32,
@@ -677,12 +683,9 @@ pub fn generate_pubkeys_with_prefix_match(
     let num_threads = base_keys.len();
     let num_prefixes = prefix_bits.len();
 
-    if num_threads == 0 || keys_per_thread == 0 || num_prefixes == 0 {
+    if num_threads == 0 || num_prefixes == 0 {
         return Ok(vec![]);
     }
-
-    // Clamp to max 4096 (CUDA kernel limit)
-    let keys_per_thread = keys_per_thread.min(4096);
 
     // Get default stream
     let stream = ctx.default_stream();
@@ -739,7 +742,7 @@ pub fn generate_pubkeys_with_prefix_match(
     builder.arg(&mut matched_endo_type_dev);  // Endomorphism type (0=original, 1=β, 2=β²)
     builder.arg(&mut match_count_dev);
     builder.arg(&num_threads_u32);
-    builder.arg(&keys_per_thread);
+    // Note: keys_per_thread is now fixed to MAX_KEYS_PER_THREAD in the kernel
     builder.arg(&max_matches);
     unsafe {
         builder.launch(config)?;
@@ -1879,12 +1882,12 @@ mod tests {
         let matches = generate_pubkeys_with_prefix_match(
             &ctx,
             &base_keys,
-            keys_per_thread,
             &prefix_bits,
             max_matches,
             threads_per_block,
         ).expect("GPU prefix match failed");
 
+        let keys_per_thread = get_max_keys_per_thread();
         println!("\nGPU Prefix Match Test:");
         println!("  Prefix: '{}'", prefix);
         println!("  Total keys: {}", num_threads * keys_per_thread as usize);
@@ -1933,12 +1936,12 @@ mod tests {
         let matches = generate_pubkeys_with_prefix_match(
             &ctx,
             &base_keys,
-            keys_per_thread,
             &prefix_bits,
             max_matches,
             threads_per_block,
         ).expect("GPU prefix match failed");
 
+        let keys_per_thread = get_max_keys_per_thread();
         println!("\nGPU Multiple Prefix Match Test:");
         println!("  Prefixes: {:?}", prefixes);
         println!("  Total keys: {}", num_threads * keys_per_thread as usize);
@@ -1988,12 +1991,12 @@ mod tests {
         let matches = generate_pubkeys_with_prefix_match(
             &ctx,
             &base_keys,
-            keys_per_thread,
             &prefix_bits,
             max_matches,
             threads_per_block,
         ).expect("GPU prefix match failed");
 
+        let keys_per_thread = get_max_keys_per_thread();
         println!("\nGPU Longer Prefix Match Test:");
         println!("  Prefix: '{}'", prefix);
         println!("  Total keys: {}", num_threads * keys_per_thread as usize);

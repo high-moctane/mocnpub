@@ -242,7 +242,7 @@
 | GPU + ブランチレス化（_ModSub/_ModAdd） | 3.16B keys/sec | 45,143x |
 | **GPU + batch_size 再最適化（3584000）** | **3.24B keys/sec** | **46,286x** 🔥🔥🔥 |
 
-**8文字 prefix が約 10 秒で見つかる！** 🎉
+**8文字 prefix が約 6 分で見つかる！** 🎉
 
 **最適化の限界点に到達** 🏁：残りのダイバージェンスは `_PointMult` のビット分岐（アルゴリズム的に必要）
 
@@ -408,6 +408,37 @@ ncu --set full ./mocnpub-main --gpu --prefix 0000
 ```
 
 **「推測するな、計測せよ」** — まずプロファイリングでボトルネックを特定！
+
+---
+
+## 🧹 公開に向けたコード整理（今後）
+
+**現状**：試行錯誤の痕跡が残っている
+
+### 削除候補のカーネル（CUDA）
+
+| カーネル | 理由 |
+|----------|------|
+| `_BatchGeneratePublicKeys` | 古い版、Montgomery's Trick なし |
+| `_BatchGeneratePublicKeysMontgomery` | エンドモルフィズムなし版 |
+| 各種テスト用カーネル | `test_*` 系 |
+
+### 削除候補の関数（Rust）
+
+| 関数 | 理由 |
+|------|------|
+| `wide_mul_u128` | 未使用（dead code 警告） |
+| `u64x4_to_bytes_for_scalar` | 未使用（dead code 警告） |
+| `generate_pubkeys_sequential_batch` | 古い版 |
+| `generate_pubkeys_sequential_montgomery_batch` | エンドモルフィズムなし版 |
+
+### 整理方針
+
+- **本番で使うもの**：`generate_pubkeys_with_prefix_match` のみ
+- **テストコード**：本番カーネルのテストだけ残す
+- **学習用コード**：別ブランチに移動 or 削除
+
+**優先度**：低（動作に影響なし、公開前に整理すればOK）
 
 ---
 

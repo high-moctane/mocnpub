@@ -364,10 +364,10 @@ fn run_gpu_mining(
         }
 
         // 2. GPU で公開鍵生成 + prefix マッチング
+        // Note: keys_per_thread is fixed to MAX_KEYS_PER_THREAD at compile time
         let matches = match generate_pubkeys_with_prefix_match(
             &ctx,
             &privkeys_u64,
-            keys_per_thread,
             &prefix_bits,
             max_matches,
             threads_per_block,

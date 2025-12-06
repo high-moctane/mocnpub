@@ -2,7 +2,7 @@
 
 Nostr npub vanity address miner with GPU acceleration (CUDA).
 
-**3.24 billion keys/sec** on RTX 5070 Ti - find an 8-character prefix in ~10 seconds!
+**3.24 billion keys/sec** on RTX 5070 Ti - find an 8-character prefix in ~6 minutes!
 
 ## Features
 
@@ -53,10 +53,10 @@ MAX_KEYS_PER_THREAD=2048 cargo build --release
 
 ```bash
 # GPU mode (recommended)
-./target/release/mocnpub-main --gpu --prefix moctane
+./target/release/mocnpub-main --gpu --prefix m0ctane
 
 # CPU mode
-./target/release/mocnpub-main --prefix moctane
+./target/release/mocnpub-main --prefix m0ctane
 ```
 
 ### Options
@@ -74,7 +74,7 @@ MAX_KEYS_PER_THREAD=2048 cargo build --release
 Search for multiple prefixes at once (OR matching):
 
 ```bash
-./target/release/mocnpub-main --gpu --prefix moctane,sakura,nostr
+./target/release/mocnpub-main --gpu --prefix m0ctane,sakura,n0str
 ```
 
 ### Examples
@@ -83,8 +83,8 @@ Search for multiple prefixes at once (OR matching):
 # Find a 4-character prefix (fast, ~5 seconds)
 ./target/release/mocnpub-main --gpu --prefix 0000
 
-# Find an 8-character prefix (~10 seconds)
-./target/release/mocnpub-main --gpu --prefix moctane0
+# Find an 8-character prefix (~6 minutes)
+./target/release/mocnpub-main --gpu --prefix m0ctane0
 
 # Find multiple keys
 ./target/release/mocnpub-main --gpu --prefix moc --limit 5
@@ -105,8 +105,8 @@ Benchmarked on RTX 5070 Ti (16GB VRAM):
 |---------------|--------------|---------------------|
 | 4 chars | ~1M | < 1 sec |
 | 6 chars | ~1B | ~0.3 sec |
-| 8 chars | ~1T | ~5-10 sec |
-| 10 chars | ~1P | ~5-17 min |
+| 8 chars | ~1T | ~6 min |
+| 10 chars | ~1P | ~4 days |
 
 Note: bech32 uses 32 characters (excluding 1, b, i, o), so each character adds ~5 bits of entropy.
 
@@ -144,7 +144,7 @@ export CUDA_PATH=/usr/local/cuda
 Reduce batch size:
 
 ```bash
-./target/release/mocnpub-main --gpu --prefix moctane --batch-size 1000000
+./target/release/mocnpub-main --gpu --prefix m0ctane --batch-size 1000000
 ```
 
 ### WSL Performance

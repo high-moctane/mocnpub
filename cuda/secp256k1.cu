@@ -1048,9 +1048,8 @@ extern "C" __global__ void generate_pubkeys_sequential_montgomery(
     uint64_t Z_arr[MAX_KEYS_PER_THREAD][4];
     uint64_t c[MAX_KEYS_PER_THREAD][4];  // Cumulative products
 
-    // Clamp keys_per_thread to MAX_KEYS_PER_THREAD
-    uint32_t n = keys_per_thread;
-    if (n > MAX_KEYS_PER_THREAD) n = MAX_KEYS_PER_THREAD;
+    // Use MAX_KEYS_PER_THREAD directly (compile-time constant for potential loop unrolling)
+    const uint32_t n = MAX_KEYS_PER_THREAD;
 
     // Load base private key
     uint64_t k[4];
@@ -1441,8 +1440,9 @@ extern "C" __global__ void test_point_add_mixed(
  *   - masks: prefix bit masks [num_prefixes] (upper bits set to 1)
  *   - num_prefixes: number of prefixes to match
  *   - num_threads: number of threads
- *   - keys_per_thread: consecutive keys per thread (max 256)
  *   - max_matches: maximum number of matches to store
+ *
+ * Note: keys_per_thread is fixed to MAX_KEYS_PER_THREAD at compile time.
  *
  * Output:
  *   - matched_base_idx: thread index of matched keys [max_matches]
@@ -1462,7 +1462,6 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
     uint32_t* matched_endo_type,
     uint32_t* match_count,
     uint32_t num_threads,
-    uint32_t keys_per_thread,
     uint32_t max_matches
 )
 {
@@ -1475,9 +1474,8 @@ extern "C" __global__ void generate_pubkeys_with_prefix_match(
     uint64_t Z_arr[MAX_KEYS_PER_THREAD][4];
     uint64_t c[MAX_KEYS_PER_THREAD][4];  // Cumulative products
 
-    // Clamp keys_per_thread to MAX_KEYS_PER_THREAD
-    uint32_t n = keys_per_thread;
-    if (n > MAX_KEYS_PER_THREAD) n = MAX_KEYS_PER_THREAD;
+    // Use MAX_KEYS_PER_THREAD directly (compile-time constant for potential loop unrolling)
+    const uint32_t n = MAX_KEYS_PER_THREAD;
 
     // Load base private key
     uint64_t k[4];
