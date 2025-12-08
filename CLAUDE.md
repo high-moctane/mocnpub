@@ -1,6 +1,6 @@
 # mocnpub - Nostr npub マイニングプロジェクト 🔥
 
-**Last Updated**: 2025-12-05
+**Last Updated**: 2025-12-08
 
 このファイルには mocnpub プロジェクトの開発方針、技術選択、段階的アプローチが記載されています。
 
@@ -263,6 +263,7 @@
 | **threads_per_block 最適化** | +6.2% | ✅ 完了 |
 | **batch_size 最適化** | +10.4% | ✅ 完了 |
 | **`_ModSub`/`_ModAdd` ブランチレス化** | +2.3%（Branch Efficiency 78.88%→82.41%） | ✅ 完了 |
+| **patterns/masks 共有メモリ化** | 複数 prefix 時 +3.4%（速度低下 11.7%→9.1%） | ✅ 完了 |
 
 #### エンドモルフィズムの仕組み
 
