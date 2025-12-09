@@ -376,28 +376,6 @@ fn reduce_512_mod_n_simple(val: &[u64; 8]) -> [u64; 4] {
     result
 }
 
-/// Wide multiplication of two u128 values, returning (low, high) parts
-#[inline]
-fn wide_mul_u128(a: u128, b: u128) -> (u128, u128) {
-    let a_lo = a as u64 as u128;
-    let a_hi = (a >> 64) as u64 as u128;
-    let b_lo = b as u64 as u128;
-    let b_hi = (b >> 64) as u64 as u128;
-
-    let p0 = a_lo * b_lo;
-    let p1 = a_lo * b_hi;
-    let p2 = a_hi * b_lo;
-    let p3 = a_hi * b_hi;
-
-    let (mid, carry) = p1.overflowing_add(p2);
-    let carry = carry as u128;
-
-    let (lo, c) = p0.overflowing_add(mid << 64);
-    let hi = p3 + (mid >> 64) + (carry << 64) + c as u128;
-
-    (lo, hi)
-}
-
 /// Compare two [u64; 4] values: returns -1, 0, or 1
 fn cmp_u64x4(a: &[u64; 4], b: &[u64; 4]) -> i32 {
     for i in (0..4).rev() {
@@ -424,11 +402,6 @@ fn sub_u64x4(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     }
 
     result
-}
-
-/// Convert [u64; 4] to bytes for scalar (helper function)
-fn u64x4_to_bytes_for_scalar(val: &[u64; 4]) -> [u8; 32] {
-    u64x4_to_bytes(val)
 }
 
 // =============================================================================
