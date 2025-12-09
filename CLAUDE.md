@@ -294,16 +294,16 @@ ncu --set full -o profile .\target\release\mocnpub-main.exe --gpu --prefix 0000 
 # → ncu-ui で profile.ncu-rep を開く → Source ページ → Divergent Branches 列
 ```
 
-**AoS 版（現行版）**：
+**AoS 版（現行版、2025-12-09 再計測）**：
 
 | 指標 | 値 | 評価 |
 |------|-----|------|
-| Compute Throughput | 83.36% | **Compute bound** |
-| Memory Throughput | 21.86% | 余裕あり |
-| Occupancy | 25% | レジスタ制限 |
-| Registers/Thread | ~170 | 多いが最適 |
-| L1 Cache Hit (Global) | **99.51%** | 超高い！ |
-| Waves Per SM | 42.67 | GPU をフル活用 |
+| Compute Throughput | 81.04% | **Compute bound** |
+| Memory Throughput | 20.31% | 余裕あり |
+| Occupancy | 25% | レジスタ制限（130/thread）|
+| Registers/Thread | 130 | あと2減らせれば Occupancy 向上...惜しい |
+| L1/TEX Hit Rate | 0.05% | 低いが並列度で隠蔽 |
+| L2 Hit Rate | 43.19% | |
 
 **SoA vs AoS 比較**（2025-12-04）：
 
@@ -311,15 +311,15 @@ ncu --set full -o profile .\target\release\mocnpub-main.exe --gpu --prefix 0000 
 |------|--------|--------|
 | **Compute Throughput** | **83.36%** | 77.41% |
 | **Waves Per SM** | **42.67** | 0.75 |
-| **L1 Cache Hit (Global)** | **99.51%** | 22.78% |
+| L1/TEX Hit Rate | ~5% | ~5% |
 | Global Coalescing | 8/32 (25%) | **31.12/32 (97%)** |
 | keys/sec | **3.09B** | 2.70B |
 
 **重要な学び**：
-- **コアレッシングだけが正義ではない** — キャッシュ効率も超重要
-- **L1 キャッシュが効く** — ローカルメモリは同じスレッドが繰り返しアクセス → キャッシュにヒット
-- **並列度が正義** — batch_size を大きくして GPU を飽和させる「脳筋戦法」は有効
-- **VRAM 効率も重要** — メモリを食いすぎると並列度が下がる
+- **並列度が正義** — batch_size を大量（28000 blocks）にして、メモリレイテンシを隠蔽
+- **Compute heavy** — secp256k1 の演算は分岐が少なく、メモリ待ちの間も計算で埋められる
+- **コアレッシングだけが正義ではない** — SoA はコアレッシング 97% でも遅かった
+- **VRAM 効率も重要** — メモリを食いすぎると並列度（batch_size）が下がる
 
 **結論**: AoS 版を本筋として最適化する。
 
