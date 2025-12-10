@@ -194,7 +194,7 @@ fn main() -> io::Result<()> {
                     }
 
                     // Update global counter periodically (every 100 iterations)
-                    if local_count % 100 == 0 {
+                    if local_count.is_multiple_of(100) {
                         total_count.fetch_add(100, Ordering::Relaxed);
                     }
                 }
@@ -517,7 +517,7 @@ fn run_gpu_mining(
 
         // Progress display (every 10 batches)
         let batch_keys = (batch_size as u64) * (keys_per_thread as u64);
-        if total_count % (batch_keys * 10) == 0 {
+        if total_count.is_multiple_of(batch_keys * 10) {
             let elapsed_secs = start.elapsed().as_secs_f64();
             let keys_per_sec = total_count as f64 / elapsed_secs;
             let mins = (elapsed_secs / 60.0) as u64;
