@@ -393,11 +393,30 @@ fn run_gpu_mining(
             let actual_key_u64 = adjust_privkey_for_endomorphism(&key_with_offset, m.endo_type);
             let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
 
-            // npub を計算（検証用）
-            let npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
+            // 秘密鍵から nsec を生成
+            let sk = SecretKey::from_slice(&actual_key_bytes)
+                .expect("Invalid secret key");
+            let nsec = seckey_to_nsec(&sk);
+
+            // 公開鍵を取得（秘密鍵から再計算 - これが正しい値）
+            let secp = Secp256k1::new();
+            let pk = sk.public_key(&secp);
+            let pk_hex = pk.to_string();
+            let pk_x_only = &pk_hex[2..];
+
+            // npub を計算（秘密鍵から再計算した公開鍵を使用）
+            let npub = pubkey_to_npub(&pk);
             let npub_body = &npub[5..];
 
-            // マッチした prefix を特定
+            // GPU から返ってきた pubkey_x との整合性を検証
+            let gpu_npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
+            if npub != gpu_npub {
+                eprintln!("⚠️  Warning: GPU pubkey_x mismatch! endo_type={}", m.endo_type);
+                eprintln!("    GPU npub:    {}", gpu_npub);
+                eprintln!("    Actual npub: {}", npub);
+            }
+
+            // マッチした prefix を特定（実際の npub で確認）
             let matched_prefix = prefixes.iter()
                 .find(|p| npub_body.starts_with(p.as_str()))
                 .map(|p| p.as_str())
@@ -406,17 +425,6 @@ fn run_gpu_mining(
             let elapsed = start.elapsed();
             let elapsed_secs = elapsed.as_secs_f64();
             let keys_per_sec = total_count as f64 / elapsed_secs;
-
-            // 秘密鍵から nsec を生成
-            let sk = SecretKey::from_slice(&actual_key_bytes)
-                .expect("Invalid secret key");
-            let nsec = seckey_to_nsec(&sk);
-
-            // 公開鍵を取得（表示用）
-            let secp = Secp256k1::new();
-            let pk = sk.public_key(&secp);
-            let pk_hex = pk.to_string();
-            let pk_x_only = &pk_hex[2..];
 
             // 結果を整形
             let output_text = format!(

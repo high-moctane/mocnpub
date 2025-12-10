@@ -694,3 +694,36 @@ mod tests {
         assert_eq!(pubkey_upper & mask, pattern & mask, "prefix should match");
     }
 }
+
+#[cfg(test)]
+mod endomorphism_tests {
+    use super::*;
+
+    #[test]
+    fn test_mod_n_mult_lambda_sq() {
+        // Python で計算した正しい値
+        // k = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+        let k: [u64; 4] = [
+            0x1234567890abcdef,
+            0x1234567890abcdef,
+            0x1234567890abcdef,
+            0x1234567890abcdef,
+        ];
+        
+        // 正しい λ²*k mod n = 0x30f00e02e8cdf3ecd8166c5214a47c18e7402da72d337fed8281d3ae181c72ae
+        let expected: [u64; 4] = [
+            0x8281d3ae181c72ae,
+            0xe7402da72d337fed,
+            0xd8166c5214a47c18,
+            0x30f00e02e8cdf3ec,
+        ];
+        
+        let result = mod_n_mult(&k, &LAMBDA_SQ);
+        
+        println!("k = {:016x}{:016x}{:016x}{:016x}", k[3], k[2], k[1], k[0]);
+        println!("Expected λ²*k = {:016x}{:016x}{:016x}{:016x}", expected[3], expected[2], expected[1], expected[0]);
+        println!("Actual λ²*k   = {:016x}{:016x}{:016x}{:016x}", result[3], result[2], result[1], result[0]);
+        
+        assert_eq!(result, expected, "mod_n_mult(k, LAMBDA_SQ) should match Python calculation");
+    }
+}

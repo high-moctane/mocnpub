@@ -53,11 +53,11 @@ __constant__ uint64_t _Beta[4] = {
 };
 
 // β² = β * β mod p
-// 0x851695d49a83f8ef919e7886e0bdd3e85495e3cfd41a72c497f8e6a5d31e6dfe
+// 0x851695d49a83f8ef919bb86153cbcb16630fb68aed0a766a3ec693d68e6afa40
 __constant__ uint64_t _Beta2[4] = {
-    0x97f8e6a5d31e6dfeULL,
-    0x5495e3cfd41a72c4ULL,
-    0x919e7886e0bdd3e8ULL,
+    0x3ec693d68e6afa40ULL,
+    0x630fb68aed0a766aULL,
+    0x919bb86153cbcb16ULL,
     0x851695d49a83f8efULL
 };
 
