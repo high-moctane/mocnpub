@@ -4,7 +4,7 @@
 // Supports both Windows and WSL/Linux.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -51,9 +51,9 @@ fn main() {
 }
 
 fn compile_cu_to_ptx(
-    nvcc: &PathBuf,
-    cu_file: &PathBuf,
-    out_dir: &PathBuf,
+    nvcc: &Path,
+    cu_file: &Path,
+    out_dir: &Path,
     max_keys_per_thread: &str,
     arch: &str,
 ) {
@@ -157,13 +157,13 @@ fn find_nvcc() -> Option<PathBuf> {
         "which"
     };
 
-    if let Ok(output) = Command::new(which_cmd).arg("nvcc").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout);
-            let path = path.trim();
-            if !path.is_empty() {
-                return Some(PathBuf::from(path));
-            }
+    if let Ok(output) = Command::new(which_cmd).arg("nvcc").output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout);
+        let path = path.trim();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
         }
     }
 
