@@ -4,15 +4,17 @@
  * This module provides Rust bindings to the CUDA implementation of secp256k1.
  */
 
-use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg};
 use cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT;
+use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::Ptx;
 use std::sync::Arc;
 
 /// Get MAX_KEYS_PER_THREAD (compile-time constant)
 /// This matches the value used in the CUDA kernel.
 pub fn get_max_keys_per_thread() -> u32 {
-    env!("MAX_KEYS_PER_THREAD").parse().expect("MAX_KEYS_PER_THREAD must be a valid u32")
+    env!("MAX_KEYS_PER_THREAD")
+        .parse()
+        .expect("MAX_KEYS_PER_THREAD must be a valid u32")
 }
 
 /// Initialize GPU and return context
@@ -494,7 +496,7 @@ pub fn generate_pubkeys_with_prefix_match(
     builder.arg(&mut matched_base_idx_dev);
     builder.arg(&mut matched_offset_dev);
     builder.arg(&mut matched_pubkeys_x_dev);
-    builder.arg(&mut matched_endo_type_dev);  // Endomorphism type (0=original, 1=β, 2=β²)
+    builder.arg(&mut matched_endo_type_dev); // Endomorphism type (0=original, 1=β, 2=β²)
     builder.arg(&mut match_count_dev);
     builder.arg(&num_threads_u32);
     // Note: keys_per_thread is now fixed to MAX_KEYS_PER_THREAD in the kernel
@@ -606,7 +608,10 @@ mod tests {
 
         // Expected: 2^32 + 977 = 0x1000003D1 = [0x1000003D1, 0, 0, 0]
         println!("2^128 * 2^128 mod p = {:?}", result);
-        println!("Expected: [0x1000003D1, 0, 0, 0] = [{}, 0, 0, 0]", 0x1000003D1u64);
+        println!(
+            "Expected: [0x1000003D1, 0, 0, 0] = [{}, 0, 0, 0]",
+            0x1000003D1u64
+        );
         assert_eq!(result, [0x1000003D1u64, 0, 0, 0]);
     }
 
@@ -636,7 +641,12 @@ mod tests {
         println!("inv(2) = {:?}", inv_a);
 
         // Expected value: 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7FFFFE18
-        let expected = [0xFFFFFFFF7FFFFE18u64, 0xFFFFFFFFFFFFFFFFu64, 0xFFFFFFFFFFFFFFFFu64, 0x7FFFFFFFFFFFFFFFu64];
+        let expected = [
+            0xFFFFFFFF7FFFFE18u64,
+            0xFFFFFFFFFFFFFFFFu64,
+            0xFFFFFFFFFFFFFFFFu64,
+            0x7FFFFFFFFFFFFFFFu64,
+        ];
         println!("Expected: {:?}", expected);
 
         // Verify: 2 * inv(2) ≡ 1 (mod p)
@@ -659,7 +669,12 @@ mod tests {
         println!("inv(3) = {:?}", inv_a);
 
         // Expected value: 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9FFFFFD75
-        let expected = [0xAAAAAAA9FFFFFD75u64, 0xAAAAAAAAAAAAAAAAu64, 0xAAAAAAAAAAAAAAAAu64, 0xAAAAAAAAAAAAAAAAu64];
+        let expected = [
+            0xAAAAAAA9FFFFFD75u64,
+            0xAAAAAAAAAAAAAAAAu64,
+            0xAAAAAAAAAAAAAAAAu64,
+            0xAAAAAAAAAAAAAAAAu64,
+        ];
         println!("Expected: {:?}", expected);
 
         // Verify: 3 * inv(3) ≡ 1 (mod p)
@@ -693,7 +708,10 @@ mod tests {
         let result = test_mod_square_gpu(&ctx, &a).expect("GPU modular squaring failed");
 
         println!("(2^128)^2 = {:?}", result);
-        println!("Expected: [0x1000003D1, 0, 0, 0] = [{}, 0, 0, 0]", 0x1000003D1u64);
+        println!(
+            "Expected: [0x1000003D1, 0, 0, 0] = [{}, 0, 0, 0]",
+            0x1000003D1u64
+        );
         assert_eq!(result, [0x1000003D1u64, 0, 0, 0]);
     }
 
@@ -719,13 +737,26 @@ mod tests {
         // This is the special case that causes the bug in _ModInv
         // Step 254 = [18446744071562067480, 18446744073709551615, 18446744073709551615, 9223372036854775807]
         // Expected: Step 254^2 = [18446744072635809548, 18446744073709551615, 18446744073709551615, 4611686018427387903]
-        let a = [18446744071562067480u64, 18446744073709551615, 18446744073709551615, 9223372036854775807];
+        let a = [
+            18446744071562067480u64,
+            18446744073709551615,
+            18446744073709551615,
+            9223372036854775807,
+        ];
         let result = test_mod_square_gpu(&ctx, &a).expect("GPU modular squaring failed");
 
         println!("Step 254^2 = {:?}", result);
-        let expected = [18446744072635809548u64, 18446744073709551615, 18446744073709551615, 4611686018427387903];
+        let expected = [
+            18446744072635809548u64,
+            18446744073709551615,
+            18446744073709551615,
+            4611686018427387903,
+        ];
         println!("Expected:    {:?}", expected);
-        assert_eq!(result, expected, "Step 254 squared should match Python simulation");
+        assert_eq!(
+            result, expected,
+            "Step 254 squared should match Python simulation"
+        );
     }
 
     #[test]
@@ -750,8 +781,8 @@ mod tests {
             0x483ADA7726A3C465u64,
         ];
 
-        let (result_x, result_y) = test_point_double_gpu(&ctx, &Gx, &Gy)
-            .expect("GPU point doubling failed");
+        let (result_x, result_y) =
+            test_point_double_gpu(&ctx, &Gx, &Gy).expect("GPU point doubling failed");
 
         // Expected: 2G
         // 2Gx = 0xC6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
@@ -782,8 +813,12 @@ mod tests {
 
         // Load PTX module
         let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
-        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
-        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+        let module = ctx
+            .load_module(Ptx::from_src(ptx_code))
+            .expect("Failed to load PTX");
+        let kernel = module
+            .load_function("test_reduce512")
+            .expect("Failed to load kernel");
 
         // Test case: p + 1
         // Input: [18446744069414583344, 18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 0, 0, 0]
@@ -802,11 +837,17 @@ mod tests {
         let expected: Vec<u64> = vec![1u64, 0, 0, 0];
 
         // Allocate device memory
-        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
-        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+        let mut input_dev = stream
+            .alloc_zeros::<u64>(8)
+            .expect("Failed to allocate input");
+        let mut output_dev = stream
+            .alloc_zeros::<u64>(4)
+            .expect("Failed to allocate output");
 
         // Copy input to device
-        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+        stream
+            .memcpy_htod(&input_512, &mut input_dev)
+            .expect("Failed to copy input");
 
         // Launch configuration
         let config = LaunchConfig {
@@ -824,7 +865,9 @@ mod tests {
         }
 
         // Copy result back to host
-        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+        let result_vec = stream
+            .memcpy_dtov(&output_dev)
+            .expect("Failed to copy result");
 
         println!("(p + 1) mod p test:");
         println!("Result:   {:?}", result_vec);
@@ -842,8 +885,12 @@ mod tests {
 
         // Load PTX module
         let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
-        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
-        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+        let module = ctx
+            .load_module(Ptx::from_src(ptx_code))
+            .expect("Failed to load PTX");
+        let kernel = module
+            .load_function("test_reduce512")
+            .expect("Failed to load kernel");
 
         // Test case: p + 2
         // Input: [18446744069414583345, 18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 0, 0, 0]
@@ -862,11 +909,17 @@ mod tests {
         let expected: Vec<u64> = vec![2u64, 0, 0, 0];
 
         // Allocate device memory
-        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
-        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+        let mut input_dev = stream
+            .alloc_zeros::<u64>(8)
+            .expect("Failed to allocate input");
+        let mut output_dev = stream
+            .alloc_zeros::<u64>(4)
+            .expect("Failed to allocate output");
 
         // Copy input to device
-        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+        stream
+            .memcpy_htod(&input_512, &mut input_dev)
+            .expect("Failed to copy input");
 
         // Launch configuration
         let config = LaunchConfig {
@@ -884,7 +937,9 @@ mod tests {
         }
 
         // Copy result back to host
-        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+        let result_vec = stream
+            .memcpy_dtov(&output_dev)
+            .expect("Failed to copy result");
 
         println!("(p + 2) mod p test:");
         println!("Result:   {:?}", result_vec);
@@ -902,8 +957,12 @@ mod tests {
 
         // Load PTX module
         let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
-        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
-        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+        let module = ctx
+            .load_module(Ptx::from_src(ptx_code))
+            .expect("Failed to load PTX");
+        let kernel = module
+            .load_function("test_reduce512")
+            .expect("Failed to load kernel");
 
         // Test case: 2 * p
         // Input: [18446744065119615070, 18446744073709551615, 18446744073709551615, 18446744073709551615, 1, 0, 0, 0]
@@ -922,11 +981,17 @@ mod tests {
         let expected: Vec<u64> = vec![0u64, 0, 0, 0];
 
         // Allocate device memory
-        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
-        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+        let mut input_dev = stream
+            .alloc_zeros::<u64>(8)
+            .expect("Failed to allocate input");
+        let mut output_dev = stream
+            .alloc_zeros::<u64>(4)
+            .expect("Failed to allocate output");
 
         // Copy input to device
-        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+        stream
+            .memcpy_htod(&input_512, &mut input_dev)
+            .expect("Failed to copy input");
 
         // Launch configuration
         let config = LaunchConfig {
@@ -944,7 +1009,9 @@ mod tests {
         }
 
         // Copy result back to host
-        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+        let result_vec = stream
+            .memcpy_dtov(&output_dev)
+            .expect("Failed to copy result");
 
         println!("(2 * p) mod p test:");
         println!("Result:   {:?}", result_vec);
@@ -977,8 +1044,8 @@ mod tests {
         // k = 2
         let k = [2u64, 0, 0, 0];
 
-        let (result_x, result_y) = test_point_mult_gpu(&ctx, &k, &Gx, &Gy)
-            .expect("GPU point multiplication failed");
+        let (result_x, result_y) =
+            test_point_mult_gpu(&ctx, &k, &Gx, &Gy).expect("GPU point multiplication failed");
 
         // Expected: 2G (same as test_point_double)
         let expected_2Gx = [
@@ -1024,8 +1091,8 @@ mod tests {
         // k = 3
         let k = [3u64, 0, 0, 0];
 
-        let (result_x, result_y) = test_point_mult_gpu(&ctx, &k, &Gx, &Gy)
-            .expect("GPU point multiplication failed");
+        let (result_x, result_y) =
+            test_point_mult_gpu(&ctx, &k, &Gx, &Gy).expect("GPU point multiplication failed");
 
         // Expected: 3G
         // 3Gx = 0xF9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9
@@ -1073,8 +1140,8 @@ mod tests {
         // k = 7
         let k = [7u64, 0, 0, 0];
 
-        let (result_x, result_y) = test_point_mult_gpu(&ctx, &k, &Gx, &Gy)
-            .expect("GPU point multiplication failed");
+        let (result_x, result_y) =
+            test_point_mult_gpu(&ctx, &k, &Gx, &Gy).expect("GPU point multiplication failed");
 
         // Expected: 7G
         // 7Gx = 0x5CBDF0646E5DB4EAA398F365F2EA7A0E3D419B7E0330E39CE92BDDEDCAC4F9BC
@@ -1108,8 +1175,12 @@ mod tests {
 
         // Load PTX module
         let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
-        let module = ctx.load_module(Ptx::from_src(ptx_code)).expect("Failed to load PTX");
-        let kernel = module.load_function("test_reduce512").expect("Failed to load kernel");
+        let module = ctx
+            .load_module(Ptx::from_src(ptx_code))
+            .expect("Failed to load PTX");
+        let kernel = module
+            .load_function("test_reduce512")
+            .expect("Failed to load kernel");
 
         // Step 10^2 の 512-bit 値（Python で計算した値）
         let input_512: Vec<u64> = vec![
@@ -1132,11 +1203,17 @@ mod tests {
         ];
 
         // Allocate device memory
-        let mut input_dev = stream.alloc_zeros::<u64>(8).expect("Failed to allocate input");
-        let mut output_dev = stream.alloc_zeros::<u64>(4).expect("Failed to allocate output");
+        let mut input_dev = stream
+            .alloc_zeros::<u64>(8)
+            .expect("Failed to allocate input");
+        let mut output_dev = stream
+            .alloc_zeros::<u64>(4)
+            .expect("Failed to allocate output");
 
         // Copy input to device
-        stream.memcpy_htod(&input_512, &mut input_dev).expect("Failed to copy input");
+        stream
+            .memcpy_htod(&input_512, &mut input_dev)
+            .expect("Failed to copy input");
 
         // Launch configuration
         let config = LaunchConfig {
@@ -1154,7 +1231,9 @@ mod tests {
         }
 
         // Copy result back to host
-        let result_vec = stream.memcpy_dtov(&output_dev).expect("Failed to copy result");
+        let result_vec = stream
+            .memcpy_dtov(&output_dev)
+            .expect("Failed to copy result");
 
         println!("Step 10^2 (512-bit) reduction test:");
         println!("Result:   {:?}", result_vec);
@@ -1166,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_gpu_prefix_match_basic() {
-        use crate::{prefix_to_bits, u64x4_to_bytes, pubkey_bytes_to_npub};
+        use crate::{prefix_to_bits, pubkey_bytes_to_npub, u64x4_to_bytes};
 
         let ctx = init_gpu().expect("Failed to initialize GPU");
 
@@ -1193,7 +1272,8 @@ mod tests {
             &prefix_bits,
             max_matches,
             threads_per_block,
-        ).expect("GPU prefix match failed");
+        )
+        .expect("GPU prefix match failed");
 
         let keys_per_thread = get_max_keys_per_thread();
         println!("\nGPU Prefix Match Test:");
@@ -1202,20 +1282,32 @@ mod tests {
         println!("  Matches found: {}", matches.len());
 
         // Verify at least some matches were found
-        assert!(!matches.is_empty(), "Should find at least some matches with prefix 'c'");
+        assert!(
+            !matches.is_empty(),
+            "Should find at least some matches with prefix 'c'"
+        );
 
         // Verify the first few matches are correct
         for (i, m) in matches.iter().take(5).enumerate() {
             let pubkey_bytes = u64x4_to_bytes(&m.pubkey_x);
             let npub = pubkey_bytes_to_npub(&pubkey_bytes);
-            let npub_body = &npub[5..];  // Remove "npub1"
+            let npub_body = &npub[5..]; // Remove "npub1"
 
-            println!("  Match {}: base_idx={}, offset={}, npub={}...",
-                     i, m.base_idx, m.offset, &npub_body[..10]);
+            println!(
+                "  Match {}: base_idx={}, offset={}, npub={}...",
+                i,
+                m.base_idx,
+                m.offset,
+                &npub_body[..10]
+            );
 
             // Verify the npub actually starts with the prefix
-            assert!(npub_body.starts_with(prefix),
-                    "npub {} should start with prefix '{}'", npub_body, prefix);
+            assert!(
+                npub_body.starts_with(prefix),
+                "npub {} should start with prefix '{}'",
+                npub_body,
+                prefix
+            );
         }
 
         println!("  ✅ All verified matches start with prefix '{}'", prefix);
@@ -1223,7 +1315,7 @@ mod tests {
 
     #[test]
     fn test_gpu_prefix_match_multiple_prefixes() {
-        use crate::{prefix_to_bits, u64x4_to_bytes, pubkey_bytes_to_npub};
+        use crate::{prefix_to_bits, pubkey_bytes_to_npub, u64x4_to_bytes};
 
         let ctx = init_gpu().expect("Failed to initialize GPU");
 
@@ -1247,7 +1339,8 @@ mod tests {
             &prefix_bits,
             max_matches,
             threads_per_block,
-        ).expect("GPU prefix match failed");
+        )
+        .expect("GPU prefix match failed");
 
         let keys_per_thread = get_max_keys_per_thread();
         println!("\nGPU Multiple Prefix Match Test:");
@@ -1256,7 +1349,10 @@ mod tests {
         println!("  Matches found: {}", matches.len());
 
         // With 3 prefixes, each 1/32 chance, we expect ~1536 matches
-        assert!(!matches.is_empty(), "Should find matches with multiple prefixes");
+        assert!(
+            !matches.is_empty(),
+            "Should find matches with multiple prefixes"
+        );
 
         // Verify matches start with one of the prefixes
         for (i, m) in matches.iter().take(5).enumerate() {
@@ -1265,11 +1361,18 @@ mod tests {
             let npub_body = &npub[5..];
 
             let matches_any = prefixes.iter().any(|p| npub_body.starts_with(p));
-            println!("  Match {}: npub={}... (matches: {})",
-                     i, &npub_body[..10], matches_any);
+            println!(
+                "  Match {}: npub={}... (matches: {})",
+                i,
+                &npub_body[..10],
+                matches_any
+            );
 
-            assert!(matches_any,
-                    "npub {} should start with one of {:?}", npub_body, prefixes);
+            assert!(
+                matches_any,
+                "npub {} should start with one of {:?}",
+                npub_body, prefixes
+            );
         }
 
         println!("  ✅ All verified matches start with one of the prefixes");
@@ -1277,7 +1380,7 @@ mod tests {
 
     #[test]
     fn test_gpu_prefix_match_longer_prefix() {
-        use crate::{prefix_to_bits, u64x4_to_bytes, pubkey_bytes_to_npub};
+        use crate::{prefix_to_bits, pubkey_bytes_to_npub, u64x4_to_bytes};
 
         let ctx = init_gpu().expect("Failed to initialize GPU");
 
@@ -1302,7 +1405,8 @@ mod tests {
             &prefix_bits,
             max_matches,
             threads_per_block,
-        ).expect("GPU prefix match failed");
+        )
+        .expect("GPU prefix match failed");
 
         let keys_per_thread = get_max_keys_per_thread();
         println!("\nGPU Longer Prefix Match Test:");
@@ -1319,8 +1423,12 @@ mod tests {
 
             println!("  Match {}: npub={}...", i, &npub_body[..10]);
 
-            assert!(npub_body.starts_with(prefix),
-                    "npub {} should start with prefix '{}'", npub_body, prefix);
+            assert!(
+                npub_body.starts_with(prefix),
+                "npub {} should start with prefix '{}'",
+                npub_body,
+                prefix
+            );
         }
 
         if !matches.is_empty() {

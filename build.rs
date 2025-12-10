@@ -15,11 +15,14 @@ fn main() {
     // Read MAX_KEYS_PER_THREAD from environment variable (default: 1408)
     // Rebuild when this env var changes
     println!("cargo:rerun-if-env-changed=MAX_KEYS_PER_THREAD");
-    let max_keys_per_thread = env::var("MAX_KEYS_PER_THREAD")
-        .unwrap_or_else(|_| "1408".to_string());
+    let max_keys_per_thread =
+        env::var("MAX_KEYS_PER_THREAD").unwrap_or_else(|_| "1408".to_string());
 
     // Pass to Rust code via cargo:rustc-env
-    println!("cargo:rustc-env=MAX_KEYS_PER_THREAD={}", max_keys_per_thread);
+    println!(
+        "cargo:rustc-env=MAX_KEYS_PER_THREAD={}",
+        max_keys_per_thread
+    );
     println!("cargo:warning=MAX_KEYS_PER_THREAD={}", max_keys_per_thread);
 
     // Detect GPU architecture
@@ -38,10 +41,22 @@ fn main() {
     println!("cargo:warning=Using nvcc: {}", nvcc.display());
 
     // Compile secp256k1.cu to PTX
-    compile_cu_to_ptx(&nvcc, &cuda_dir.join("secp256k1.cu"), &out_dir, &max_keys_per_thread, &arch);
+    compile_cu_to_ptx(
+        &nvcc,
+        &cuda_dir.join("secp256k1.cu"),
+        &out_dir,
+        &max_keys_per_thread,
+        &arch,
+    );
 }
 
-fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf, max_keys_per_thread: &str, arch: &str) {
+fn compile_cu_to_ptx(
+    nvcc: &PathBuf,
+    cu_file: &PathBuf,
+    out_dir: &PathBuf,
+    max_keys_per_thread: &str,
+    arch: &str,
+) {
     let file_stem = cu_file.file_stem().unwrap().to_str().unwrap();
     let ptx_file = out_dir.join(format!("{}.ptx", file_stem));
 
@@ -178,7 +193,10 @@ fn detect_gpu_arch() -> String {
 
     // 2. Try to detect via nvidia-smi
     if let Some(arch) = detect_gpu_arch_nvidia_smi() {
-        println!("cargo:warning=GPU arch auto-detected via nvidia-smi: {}", arch);
+        println!(
+            "cargo:warning=GPU arch auto-detected via nvidia-smi: {}",
+            arch
+        );
         return arch;
     }
 

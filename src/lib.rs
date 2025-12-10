@@ -1,6 +1,6 @@
-use secp256k1::{PublicKey, SecretKey};
-use bech32::{encode, Bech32, Hrp};
+use bech32::{Bech32, Hrp, encode};
 use hex;
+use secp256k1::{PublicKey, SecretKey};
 
 // GPU module
 pub mod gpu;
@@ -122,7 +122,7 @@ const BECH32_CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 /// ```
 pub fn prefix_to_bits(prefix: &str) -> (u64, u64, u32) {
     let mut pattern: u64 = 0;
-    let mut bit_pos: u32 = 64;  // Place from upper bits
+    let mut bit_pos: u32 = 64; // Place from upper bits
 
     for ch in prefix.chars() {
         // Get position in bech32 character set (0-31)
@@ -137,7 +137,7 @@ pub fn prefix_to_bits(prefix: &str) -> (u64, u64, u32) {
     let mask = if bit_len >= 64 {
         u64::MAX
     } else {
-        !((1u64 << (64 - bit_len)) - 1)  // Upper bit_len bits are 1
+        !((1u64 << (64 - bit_len)) - 1) // Upper bit_len bits are 1
     };
 
     (pattern, mask, bit_len)
@@ -307,11 +307,7 @@ fn reduce_mod_n(val: &[u64; 8]) -> [u64; 4] {
 fn reduce_512_mod_n_simple(val: &[u64; 8]) -> [u64; 4] {
     // 2^256 - n as [u64; 3] (fits in 129 bits)
     // = 0x014551231950B75FC4402DA1732FC9BEBF
-    let k: [u64; 3] = [
-        0x402DA1732FC9BEBF,
-        0x4551231950B75FC4,
-        0x0000000000000001,
-    ];
+    let k: [u64; 3] = [0x402DA1732FC9BEBF, 0x4551231950B75FC4, 0x0000000000000001];
 
     // Extract low and high 256-bit parts
     let low = [val[0], val[1], val[2], val[3]];
@@ -441,7 +437,9 @@ pub fn validate_prefix(prefix: &str) -> Result<(), String> {
             // Add detailed explanation for commonly confused characters
             let hint = match ch {
                 '1' => "Character '1' is not allowed (reserved as separator in bech32)",
-                'b' | 'i' | 'o' => "Character is excluded to avoid confusion with similar-looking characters",
+                'b' | 'i' | 'o' => {
+                    "Character is excluded to avoid confusion with similar-looking characters"
+                }
                 _ => "Character is not in the bech32 character set",
             };
 
@@ -503,7 +501,10 @@ mod tests {
         let nsec = seckey_to_nsec(&sk);
 
         // Correct nsec (generated from implementation)
-        assert_eq!(nsec, "nsec180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsgyumg0");
+        assert_eq!(
+            nsec,
+            "nsec180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsgyumg0"
+        );
 
         // Verify nsec format is correct
         assert!(nsec.starts_with("nsec1"));
@@ -521,7 +522,10 @@ mod tests {
         let npub = pubkey_to_npub(&pk);
 
         // Correct npub (generated from implementation)
-        assert_eq!(npub, "npub1wxxh2mmqeaghnme4kwwudkel7k8sfsrnf7qld4zppu9sglwljq5shd0y24");
+        assert_eq!(
+            npub,
+            "npub1wxxh2mmqeaghnme4kwwudkel7k8sfsrnf7qld4zppu9sglwljq5shd0y24"
+        );
 
         // Verify npub format is correct
         assert!(npub.starts_with("npub1"));
@@ -551,16 +555,19 @@ mod tests {
     fn test_bytes_u64x4_roundtrip() {
         // Roundtrip test: bytes → u64x4 → bytes
         let original_bytes: [u8; 32] = [
-            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,  // byte[0..8]
-            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,  // byte[8..16]
-            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,  // byte[16..24]
-            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5,  // byte[24..32]
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D, // byte[0..8]
+            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8, // byte[8..16]
+            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7, // byte[16..24]
+            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5, // byte[24..32]
         ];
 
         let u64x4 = bytes_to_u64x4(&original_bytes);
         let roundtrip_bytes = u64x4_to_bytes(&u64x4);
 
-        assert_eq!(original_bytes, roundtrip_bytes, "roundtrip should preserve bytes");
+        assert_eq!(
+            original_bytes, roundtrip_bytes,
+            "roundtrip should preserve bytes"
+        );
     }
 
     #[test]
@@ -579,8 +586,7 @@ mod tests {
         let hex_str = hex::encode(&bytes);
 
         assert_eq!(
-            hex_str,
-            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+            hex_str, "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
             "2G x-coordinate should match"
         );
     }
@@ -589,10 +595,9 @@ mod tests {
     fn test_pubkey_bytes_to_npub_2g() {
         // Convert 2G x-coordinate to npub
         let pubkey_bytes: [u8; 32] = [
-            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
-            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
-            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
-            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5,
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D, 0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0,
+            0x7C, 0xD8, 0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7, 0xAB, 0xAC, 0x09, 0xB9,
+            0x5C, 0x70, 0x9E, 0xE5,
         ];
 
         let npub = pubkey_bytes_to_npub(&pubkey_bytes);
@@ -609,14 +614,14 @@ mod tests {
         // Single character test: 'q' = 0, 'm' = 27, 'l' = 31
         let (pattern, mask, bit_len) = prefix_to_bits("q");
         assert_eq!(bit_len, 5);
-        assert_eq!(pattern, 0b00000_u64 << 59);  // 'q' = 0
+        assert_eq!(pattern, 0b00000_u64 << 59); // 'q' = 0
         assert_eq!(mask, 0b11111_u64 << 59);
 
         let (pattern, _, _) = prefix_to_bits("m");
-        assert_eq!(pattern, 0b11011_u64 << 59);  // 'm' = 27
+        assert_eq!(pattern, 0b11011_u64 << 59); // 'm' = 27
 
         let (pattern, _, _) = prefix_to_bits("l");
-        assert_eq!(pattern, 0b11111_u64 << 59);  // 'l' = 31
+        assert_eq!(pattern, 0b11111_u64 << 59); // 'l' = 31
     }
 
     #[test]
@@ -643,15 +648,16 @@ mod tests {
         assert_eq!(bit_len, 35);
 
         // Concatenate 5-bit value of each character
-        let m = 27u64;  // 11011
-        let zero = 15u64;  // 01111
-        let c = 24u64;  // 11000
-        let t = 11u64;  // 01011
-        let a = 29u64;  // 11101
-        let n = 19u64;  // 10011
-        let e = 25u64;  // 11001
+        let m = 27u64; // 11011
+        let zero = 15u64; // 01111
+        let c = 24u64; // 11000
+        let t = 11u64; // 01011
+        let a = 29u64; // 11101
+        let n = 19u64; // 10011
+        let e = 25u64; // 11001
 
-        let expected_pattern = (m << 30 | zero << 25 | c << 20 | t << 15 | a << 10 | n << 5 | e) << (64 - 35);
+        let expected_pattern =
+            (m << 30 | zero << 25 | c << 20 | t << 15 | a << 10 | n << 5 | e) << (64 - 35);
         assert_eq!(pattern, expected_pattern);
 
         // Mask: upper 35 bits are 1
@@ -664,18 +670,17 @@ mod tests {
         // Consistency test with actual npub
         // Generate 2G npub and verify prefix matches
         let pubkey_bytes: [u8; 32] = [
-            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D,
-            0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0, 0x7C, 0xD8,
-            0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7,
-            0xAB, 0xAC, 0x09, 0xB9, 0x5C, 0x70, 0x9E, 0xE5,
+            0xC6, 0x04, 0x7F, 0x94, 0x41, 0xED, 0x7D, 0x6D, 0x30, 0x45, 0x40, 0x6E, 0x95, 0xC0,
+            0x7C, 0xD8, 0x5C, 0x77, 0x8E, 0x4B, 0x8C, 0xEF, 0x3C, 0xA7, 0xAB, 0xAC, 0x09, 0xB9,
+            0x5C, 0x70, 0x9E, 0xE5,
         ];
 
         let npub = pubkey_bytes_to_npub(&pubkey_bytes);
-        let npub_body = &npub[5..];  // Remove "npub1"
+        let npub_body = &npub[5..]; // Remove "npub1"
         println!("2G npub body: {}", npub_body);
 
         // Create prefix from first few characters of npub body and test bit matching
-        let prefix = &npub_body[..4];  // First 4 characters
+        let prefix = &npub_body[..4]; // First 4 characters
         println!("Testing prefix: {}", prefix);
 
         let (pattern, mask, bit_len) = prefix_to_bits(prefix);
@@ -685,8 +690,14 @@ mod tests {
 
         // Get upper 64 bits of pubkey_bytes
         let pubkey_upper = u64::from_be_bytes([
-            pubkey_bytes[0], pubkey_bytes[1], pubkey_bytes[2], pubkey_bytes[3],
-            pubkey_bytes[4], pubkey_bytes[5], pubkey_bytes[6], pubkey_bytes[7],
+            pubkey_bytes[0],
+            pubkey_bytes[1],
+            pubkey_bytes[2],
+            pubkey_bytes[3],
+            pubkey_bytes[4],
+            pubkey_bytes[5],
+            pubkey_bytes[6],
+            pubkey_bytes[7],
         ]);
         println!("pubkey upper: {:064b}", pubkey_upper);
 
@@ -717,13 +728,22 @@ mod endomorphism_tests {
             0xd8166c5214a47c18,
             0x30f00e02e8cdf3ec,
         ];
-        
+
         let result = mod_n_mult(&k, &LAMBDA_SQ);
-        
+
         println!("k = {:016x}{:016x}{:016x}{:016x}", k[3], k[2], k[1], k[0]);
-        println!("Expected λ²*k = {:016x}{:016x}{:016x}{:016x}", expected[3], expected[2], expected[1], expected[0]);
-        println!("Actual λ²*k   = {:016x}{:016x}{:016x}{:016x}", result[3], result[2], result[1], result[0]);
-        
-        assert_eq!(result, expected, "mod_n_mult(k, LAMBDA_SQ) should match Python calculation");
+        println!(
+            "Expected λ²*k = {:016x}{:016x}{:016x}{:016x}",
+            expected[3], expected[2], expected[1], expected[0]
+        );
+        println!(
+            "Actual λ²*k   = {:016x}{:016x}{:016x}{:016x}",
+            result[3], result[2], result[1], result[0]
+        );
+
+        assert_eq!(
+            result, expected,
+            "mod_n_mult(k, LAMBDA_SQ) should match Python calculation"
+        );
     }
 }

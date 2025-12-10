@@ -1,0 +1,8 @@
+# lefthook.yml - Git hooks configuration
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  commands:
+    fmt:
+      run: cargo fmt --check
+      fail_text: "Run 'cargo fmt' to fix formatting issues"

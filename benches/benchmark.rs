@@ -1,13 +1,11 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
-use std::hint::black_box;
-use secp256k1::{rand, Secp256k1};
-use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use mocnpub_main::gpu::{
-    init_gpu, generate_pubkeys_batch,
-    generate_pubkeys_sequential_batch,
-    generate_pubkeys_sequential_montgomery_batch,
-    test_mod_square_gpu, test_mod_mult_gpu,
+    generate_pubkeys_batch, generate_pubkeys_sequential_batch,
+    generate_pubkeys_sequential_montgomery_batch, init_gpu, test_mod_mult_gpu, test_mod_square_gpu,
 };
+use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
+use secp256k1::{Secp256k1, rand};
+use std::hint::black_box;
 
 /// Benchmark: Key generation performance
 ///
@@ -119,8 +117,8 @@ fn bench_gpu_methods(c: &mut Criterion) {
     // Test configurations: (num_threads, keys_per_thread)
     let configs = [
         // Small scale (warm-up)
-        (256, 64),    // 16,384 keys
-        (256, 256),   // 65,536 keys
+        (256, 64),  // 16,384 keys
+        (256, 256), // 65,536 keys
         // Medium scale
         (1024, 64),   // 65,536 keys
         (1024, 256),  // 262,144 keys
@@ -138,9 +136,8 @@ fn bench_gpu_methods(c: &mut Criterion) {
         let total_keys = num_threads * keys_per_thread;
 
         // Prepare keys for Batch
-        let batch_keys: Vec<[u64; 4]> = (2..(2 + total_keys as u64))
-            .map(|k| [k, 0, 0, 0])
-            .collect();
+        let batch_keys: Vec<[u64; 4]> =
+            (2..(2 + total_keys as u64)).map(|k| [k, 0, 0, 0]).collect();
 
         // Prepare base keys for Sequential/Montgomery
         let base_keys: Vec<[u64; 4]> = (0..num_threads)
@@ -153,11 +150,7 @@ fn bench_gpu_methods(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("batch", &config_name),
             &(&batch_keys,),
-            |b, (keys,)| {
-                b.iter(|| {
-                    generate_pubkeys_batch(&ctx, black_box(keys)).unwrap()
-                })
-            },
+            |b, (keys,)| b.iter(|| generate_pubkeys_batch(&ctx, black_box(keys)).unwrap()),
         );
 
         // Sequential (Phase 1: PointAddMixed + JacobianToAffine per key)
@@ -165,9 +158,7 @@ fn bench_gpu_methods(c: &mut Criterion) {
             BenchmarkId::new("sequential", &config_name),
             &(&base_keys, keys_per_thread as u32),
             |b, (keys, kpt)| {
-                b.iter(|| {
-                    generate_pubkeys_sequential_batch(&ctx, black_box(keys), *kpt).unwrap()
-                })
+                b.iter(|| generate_pubkeys_sequential_batch(&ctx, black_box(keys), *kpt).unwrap())
             },
         );
 
@@ -177,7 +168,8 @@ fn bench_gpu_methods(c: &mut Criterion) {
             &(&base_keys, keys_per_thread as u32),
             |b, (keys, kpt)| {
                 b.iter(|| {
-                    generate_pubkeys_sequential_montgomery_batch(&ctx, black_box(keys), *kpt).unwrap()
+                    generate_pubkeys_sequential_montgomery_batch(&ctx, black_box(keys), *kpt)
+                        .unwrap()
                 })
             },
         );
@@ -194,7 +186,7 @@ fn bench_gpu_keys_per_thread(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("gpu_keys_per_thread");
 
-    let num_threads = 1024;  // More practical thread count
+    let num_threads = 1024; // More practical thread count
     // 10K → 100K consecutive keys! How far can it scale?
     let keys_per_thread_options = [10000, 20000, 50000, 100000];
 
@@ -211,7 +203,8 @@ fn bench_gpu_keys_per_thread(c: &mut Criterion) {
             &(&base_keys, keys_per_thread as u32),
             |b, (keys, kpt)| {
                 b.iter(|| {
-                    generate_pubkeys_sequential_montgomery_batch(&ctx, black_box(keys), *kpt).unwrap()
+                    generate_pubkeys_sequential_montgomery_batch(&ctx, black_box(keys), *kpt)
+                        .unwrap()
                 })
             },
         );
@@ -229,20 +222,21 @@ fn bench_mod_square_vs_mult(c: &mut Criterion) {
     let mut group = c.benchmark_group("mod_square_vs_mult");
 
     // Test value: moderately large number
-    let a = [0x123456789ABCDEFu64, 0xFEDCBA9876543210u64, 0x1111111111111111u64, 0x2222222222222222u64];
+    let a = [
+        0x123456789ABCDEFu64,
+        0xFEDCBA9876543210u64,
+        0x1111111111111111u64,
+        0x2222222222222222u64,
+    ];
 
     // _ModSquare: a²
     group.bench_function("mod_square", |b| {
-        b.iter(|| {
-            test_mod_square_gpu(&ctx, black_box(&a)).unwrap()
-        })
+        b.iter(|| test_mod_square_gpu(&ctx, black_box(&a)).unwrap())
     });
 
     // _ModMult: a * a（現在の _ModSquare の内部実装と同等）
     group.bench_function("mod_mult_self", |b| {
-        b.iter(|| {
-            test_mod_mult_gpu(&ctx, black_box(&a), black_box(&a)).unwrap()
-        })
+        b.iter(|| test_mod_mult_gpu(&ctx, black_box(&a), black_box(&a)).unwrap())
     });
 
     group.finish();

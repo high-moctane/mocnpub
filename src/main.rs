@@ -3,15 +3,17 @@ use secp256k1::rand::{self, RngCore};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::time::Instant;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
+use std::time::Instant;
 
 // Import common functions from lib.rs
+use mocnpub_main::gpu::{
+    calculate_optimal_batch_size, generate_pubkeys_with_prefix_match, get_sm_count, init_gpu,
+};
+use mocnpub_main::{add_u64x4_scalar, adjust_privkey_for_endomorphism, prefixes_to_bits};
+use mocnpub_main::{bytes_to_u64x4, pubkey_bytes_to_npub, u64x4_to_bytes};
 use mocnpub_main::{pubkey_to_npub, seckey_to_nsec, validate_prefix};
-use mocnpub_main::{bytes_to_u64x4, u64x4_to_bytes, pubkey_bytes_to_npub};
-use mocnpub_main::{prefixes_to_bits, add_u64x4_scalar, adjust_privkey_for_endomorphism};
-use mocnpub_main::gpu::{init_gpu, generate_pubkeys_with_prefix_match, get_sm_count, calculate_optimal_batch_size};
 
 /// Nostr npub mining tool 🔑
 ///
@@ -56,14 +58,17 @@ struct Args {
 /// Get keys_per_thread value determined at build time
 /// Can be specified via MAX_KEYS_PER_THREAD env var (default: 1408)
 fn get_max_keys_per_thread() -> u32 {
-    env!("MAX_KEYS_PER_THREAD").parse().expect("MAX_KEYS_PER_THREAD must be a valid u32")
+    env!("MAX_KEYS_PER_THREAD")
+        .parse()
+        .expect("MAX_KEYS_PER_THREAD must be a valid u32")
 }
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
     // Split prefix by comma and convert to Vec
-    let prefixes: Vec<String> = args.prefix
+    let prefixes: Vec<String> = args
+        .prefix
         .split(',')
         .map(|s| s.trim().to_string())
         .collect();
@@ -91,8 +96,18 @@ fn main() -> io::Result<()> {
         let keys_per_thread = get_max_keys_per_thread();
         println!("Mode: GPU (CUDA) 🚀");
         println!("Batch size: {}", args.batch_size);
-        println!("Threads/block: {}, Keys/thread: {} (build-time)", args.threads_per_block, keys_per_thread);
-        println!("Limit: {}\n", if args.limit == 0 { "unlimited".to_string() } else { args.limit.to_string() });
+        println!(
+            "Threads/block: {}, Keys/thread: {} (build-time)",
+            args.threads_per_block, keys_per_thread
+        );
+        println!(
+            "Limit: {}\n",
+            if args.limit == 0 {
+                "unlimited".to_string()
+            } else {
+                args.limit.to_string()
+            }
+        );
         return run_gpu_mining(
             &prefixes,
             args.limit,
@@ -105,7 +120,14 @@ fn main() -> io::Result<()> {
 
     println!("Mode: CPU");
     println!("Threads: {}", num_threads);
-    println!("Limit: {}\n", if args.limit == 0 { "unlimited".to_string() } else { args.limit.to_string() });
+    println!(
+        "Limit: {}\n",
+        if args.limit == 0 {
+            "unlimited".to_string()
+        } else {
+            args.limit.to_string()
+        }
+    );
 
     // Shared counters across all threads
     let total_count = Arc::new(AtomicU64::new(0));
@@ -147,7 +169,9 @@ fn main() -> io::Result<()> {
                     let npub_body = &npub[5..]; // "npub1" is 5 chars
 
                     // Check if any prefix matches (OR logic)
-                    if let Some(matched_prefix) = prefixes.iter().find(|p| npub_body.starts_with(p.as_str())) {
+                    if let Some(matched_prefix) =
+                        prefixes.iter().find(|p| npub_body.starts_with(p.as_str()))
+                    {
                         // Increment found count
                         let count = found_count.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -155,7 +179,10 @@ fn main() -> io::Result<()> {
                         let current_total = total_count.load(Ordering::Relaxed) + local_count;
 
                         // Send result via channel (including matched_prefix)
-                        if sender.send((sk, pk, npub.clone(), matched_prefix.clone(), current_total)).is_err() {
+                        if sender
+                            .send((sk, pk, npub.clone(), matched_prefix.clone(), current_total))
+                            .is_err()
+                        {
                             // Main thread has terminated
                             break;
                         }
@@ -191,7 +218,8 @@ fn main() -> io::Result<()> {
     let progress_handle = std::thread::spawn(move || {
         loop {
             // Exit if limit reached (0 = unlimited, never exit)
-            if limit_progress > 0 && found_count_progress.load(Ordering::Relaxed) >= limit_progress {
+            if limit_progress > 0 && found_count_progress.load(Ordering::Relaxed) >= limit_progress
+            {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
@@ -205,10 +233,12 @@ fn main() -> io::Result<()> {
 
     // Prepare file output (append mode)
     let mut output_file = if let Some(ref output_path) = args.output {
-        Some(OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(output_path)?)
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(output_path)?,
+        )
     } else {
         None
     };
@@ -315,10 +345,15 @@ fn run_gpu_mining(
         match calculate_optimal_batch_size(&ctx, batch_size, threads_per_block) {
             Ok(adjusted) => {
                 if adjusted != batch_size {
-                    println!("📐 SM count: {}, adjusted batch_size: {} → {} (Tail Effect mitigation)",
-                             sm_count, batch_size, adjusted);
+                    println!(
+                        "📐 SM count: {}, adjusted batch_size: {} → {} (Tail Effect mitigation)",
+                        sm_count, batch_size, adjusted
+                    );
                 } else {
-                    println!("📐 SM count: {}, batch_size: {} (already optimal)", sm_count, batch_size);
+                    println!(
+                        "📐 SM count: {}, batch_size: {} (already optimal)",
+                        sm_count, batch_size
+                    );
                 }
                 adjusted
             }
@@ -330,7 +365,10 @@ fn run_gpu_mining(
 
     // Convert prefixes to bit patterns (pre-computed)
     let prefix_bits = prefixes_to_bits(prefixes);
-    println!("📊 Prefix patterns prepared: {} pattern(s)\n", prefix_bits.len());
+    println!(
+        "📊 Prefix patterns prepared: {} pattern(s)\n",
+        prefix_bits.len()
+    );
 
     let start = Instant::now();
     let mut total_count: u64 = 0;
@@ -339,16 +377,13 @@ fn run_gpu_mining(
 
     // Prepare file output (append mode)
     let mut output_file = if let Some(path) = output_path {
-        Some(OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?)
+        Some(OpenOptions::new().create(true).append(true).open(path)?)
     } else {
         None
     };
 
     // Parameter settings
-    let max_matches: u32 = 1000;     // generous buffer
+    let max_matches: u32 = 1000; // generous buffer
 
     // Secret key buffers (base keys)
     let mut privkey_bytes: Vec<[u8; 32]> = vec![[0u8; 32]; batch_size];
@@ -393,8 +428,7 @@ fn run_gpu_mining(
             let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
 
             // Generate nsec from secret key
-            let sk = SecretKey::from_slice(&actual_key_bytes)
-                .expect("Invalid secret key");
+            let sk = SecretKey::from_slice(&actual_key_bytes).expect("Invalid secret key");
             let nsec = seckey_to_nsec(&sk);
 
             // Get public key (recomputed from secret key - this is the correct value)
@@ -410,13 +444,17 @@ fn run_gpu_mining(
             // Verify consistency with pubkey_x returned from GPU
             let gpu_npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
             if npub != gpu_npub {
-                eprintln!("⚠️  Warning: GPU pubkey_x mismatch! endo_type={}", m.endo_type);
+                eprintln!(
+                    "⚠️  Warning: GPU pubkey_x mismatch! endo_type={}",
+                    m.endo_type
+                );
                 eprintln!("    GPU npub:    {}", gpu_npub);
                 eprintln!("    Actual npub: {}", npub);
             }
 
             // Identify matched prefix (verified against actual npub)
-            let matched_prefix = prefixes.iter()
+            let matched_prefix = prefixes
+                .iter()
                 .find(|p| npub_body.starts_with(p.as_str()))
                 .map(|p| p.as_str())
                 .unwrap_or("?");
@@ -466,7 +504,10 @@ fn run_gpu_mining(
                 println!("Keys found: {}", found_count);
                 println!("Total attempts: {}", total_count);
                 println!("Elapsed: {:.2} sec", final_elapsed_secs);
-                println!("Performance: {:.2} keys/sec", total_count as f64 / final_elapsed_secs);
+                println!(
+                    "Performance: {:.2} keys/sec",
+                    total_count as f64 / final_elapsed_secs
+                );
                 if let Some(path) = output_path {
                     println!("Results saved to: {}", path);
                 }
@@ -481,8 +522,10 @@ fn run_gpu_mining(
             let keys_per_sec = total_count as f64 / elapsed_secs;
             let mins = (elapsed_secs / 60.0) as u64;
             let secs = (elapsed_secs % 60.0) as u64;
-            println!("{} attempts... ({}:{:02}, {:.2} keys/sec, found: {})",
-                     total_count, mins, secs, keys_per_sec, found_count);
+            println!(
+                "{} attempts... ({}:{:02}, {:.2} keys/sec, found: {})",
+                total_count, mins, secs, keys_per_sec, found_count
+            );
         }
     }
 }
