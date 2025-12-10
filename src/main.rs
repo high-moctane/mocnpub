@@ -479,8 +479,10 @@ fn run_gpu_mining(
         if total_count % (batch_keys * 10) == 0 {
             let elapsed_secs = start.elapsed().as_secs_f64();
             let keys_per_sec = total_count as f64 / elapsed_secs;
-            println!("{} attempts... ({:.2} keys/sec, found: {})",
-                     total_count, keys_per_sec, found_count);
+            let mins = (elapsed_secs / 60.0) as u64;
+            let secs = (elapsed_secs % 60.0) as u64;
+            println!("{} attempts... ({}:{:02}, {:.2} keys/sec, found: {})",
+                     total_count, mins, secs, keys_per_sec, found_count);
         }
     }
 }
