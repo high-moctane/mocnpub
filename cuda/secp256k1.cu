@@ -861,7 +861,7 @@ __device__ void _PointMult(
 // Production Kernels
 // ============================================================================
 
-// MAX_KEYS_PER_THREAD: ビルド時に -D オプションで指定可能（デフォルト: 1408）
+// MAX_KEYS_PER_THREAD: Can be specified via -D option at build time (default: 1408)
 #ifndef MAX_KEYS_PER_THREAD
 #define MAX_KEYS_PER_THREAD 1408
 #endif

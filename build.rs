@@ -1,7 +1,7 @@
-// build.rs - CUDA カーネルを自動的に PTX にコンパイル
+// build.rs - Automatically compile CUDA kernels to PTX
 //
-// cargo build 時に自動的に nvcc を実行して、.cu ファイルから .ptx を生成します。
-// Windows と WSL/Linux の両方に対応しています。
+// Automatically runs nvcc during cargo build to generate .ptx from .cu files.
+// Supports both Windows and WSL/Linux.
 
 use std::env;
 use std::path::PathBuf;
@@ -59,29 +59,29 @@ fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf, max_k
         ptx_file.display()
     );
 
-    // TODO: 将来的には GPU アーキテクチャを動的に検出したい
-    // 現在は RTX 5070 Ti (Blackwell, sm_120) を想定
-    // PTX は前方互換性があるので、古いアーキテクチャで生成しても
-    // JIT コンパイル時に適切なアーキテクチャにコンパイルされる
-    // 注意: CUDA 13.0 では sm_75 (Turing) が最小サポートアーキテクチャ
-    let arch = "sm_120"; // Blackwell（RTX 50 シリーズ）
+    // TODO: Dynamically detect GPU architecture in the future
+    // Currently assumes RTX 5070 Ti (Blackwell, sm_120)
+    // PTX is forward-compatible, so older architecture PTX will be
+    // JIT-compiled to appropriate architecture at runtime
+    // Note: CUDA 13.0 minimum supported architecture is sm_75 (Turing)
+    let arch = "sm_120"; // Blackwell (RTX 50 series)
 
-    // Windows の場合、cl.exe に UTF-8 として解釈させるオプションを追加
+    // Add UTF-8 option for cl.exe on Windows
     let mut args = vec![
         "-ptx".to_string(),
         "-o".to_string(),
         ptx_file.to_str().unwrap().to_string(),
         cu_file.to_str().unwrap().to_string(),
         format!("-arch={}", arch),
-        // MAX_KEYS_PER_THREAD を定義（環境変数から取得した値）
+        // Define MAX_KEYS_PER_THREAD (value from environment variable)
         format!("-D MAX_KEYS_PER_THREAD={}", max_keys_per_thread),
-        // Visual Studio 2026 など新しいバージョンでもコンパイルできるように
+        // Allow newer Visual Studio versions (e.g., VS 2026)
         "-allow-unsupported-compiler".to_string(),
-        // ソースレベルのプロファイリング用（ncu-ui で行番号を表示）
+        // Source-level profiling (show line numbers in ncu-ui)
         "-lineinfo".to_string(),
     ];
 
-    // Windows では cl.exe に UTF-8 オプションを渡す
+    // Pass UTF-8 option to cl.exe on Windows
     if cfg!(target_os = "windows") {
         args.push("-Xcompiler".to_string());
         args.push("/utf-8".to_string());
