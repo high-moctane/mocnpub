@@ -39,9 +39,6 @@ fn main() {
 
     // Compile secp256k1.cu to PTX
     compile_cu_to_ptx(&nvcc, &cuda_dir.join("secp256k1.cu"), &out_dir, &max_keys_per_thread, &arch);
-
-    // Compile mandelbrot.cu to PTX (in root directory)
-    compile_cu_to_ptx(&nvcc, &manifest_dir.join("mandelbrot.cu"), &out_dir, &max_keys_per_thread, &arch);
 }
 
 fn compile_cu_to_ptx(nvcc: &PathBuf, cu_file: &PathBuf, out_dir: &PathBuf, max_keys_per_thread: &str, arch: &str) {
