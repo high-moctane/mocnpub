@@ -102,7 +102,7 @@ pub fn test_mod_add_gpu(
     }
 
     // Copy result back to host
-    let result_vec = stream.memcpy_dtov(&output_dev)?;
+    let result_vec = stream.clone_dtoh(&output_dev)?;
 
     // Convert to fixed-size array
     let mut result = [0u64; 4];
@@ -157,7 +157,7 @@ pub fn test_mod_mult_gpu(
     }
 
     // Copy result back to host
-    let result_vec = stream.memcpy_dtov(&output_dev)?;
+    let result_vec = stream.clone_dtoh(&output_dev)?;
 
     // Convert to fixed-size array
     let mut result = [0u64; 4];
@@ -207,7 +207,7 @@ pub fn test_mod_inv_gpu(
     }
 
     // Copy result back to host
-    let result_vec = stream.memcpy_dtov(&output_dev)?;
+    let result_vec = stream.clone_dtoh(&output_dev)?;
 
     // Convert to fixed-size array
     let mut result = [0u64; 4];
@@ -257,7 +257,7 @@ pub fn test_mod_square_gpu(
     }
 
     // Copy result back to host
-    let result_vec = stream.memcpy_dtov(&output_dev)?;
+    let result_vec = stream.clone_dtoh(&output_dev)?;
 
     // Convert to fixed-size array
     let mut result = [0u64; 4];
@@ -321,8 +321,8 @@ pub fn test_point_double_gpu(
     }
 
     // Copy result back to host
-    let result_x_vec = stream.memcpy_dtov(&output_x_dev)?;
-    let result_y_vec = stream.memcpy_dtov(&output_y_dev)?;
+    let result_x_vec = stream.clone_dtoh(&output_x_dev)?;
+    let result_y_vec = stream.clone_dtoh(&output_y_dev)?;
 
     // Convert to fixed-size arrays
     let mut result_x = [0u64; 4];
@@ -388,8 +388,8 @@ pub fn test_point_mult_gpu(
     }
 
     // Copy result back to host
-    let result_x_vec = stream.memcpy_dtov(&output_x_dev)?;
-    let result_y_vec = stream.memcpy_dtov(&output_y_dev)?;
+    let result_x_vec = stream.clone_dtoh(&output_x_dev)?;
+    let result_y_vec = stream.clone_dtoh(&output_y_dev)?;
 
     // Convert to fixed-size arrays
     let mut result_x = [0u64; 4];
@@ -506,7 +506,7 @@ pub fn generate_pubkeys_with_prefix_match(
     }
 
     // Copy match count back
-    let match_count_vec = stream.memcpy_dtov(&match_count_dev)?;
+    let match_count_vec = stream.clone_dtoh(&match_count_dev)?;
     let match_count = match_count_vec[0].min(max_matches) as usize;
 
     if match_count == 0 {
@@ -514,10 +514,10 @@ pub fn generate_pubkeys_with_prefix_match(
     }
 
     // Copy results back
-    let matched_base_idx = stream.memcpy_dtov(&matched_base_idx_dev)?;
-    let matched_offset = stream.memcpy_dtov(&matched_offset_dev)?;
-    let matched_pubkeys_x_flat = stream.memcpy_dtov(&matched_pubkeys_x_dev)?;
-    let matched_endo_type = stream.memcpy_dtov(&matched_endo_type_dev)?;
+    let matched_base_idx = stream.clone_dtoh(&matched_base_idx_dev)?;
+    let matched_offset = stream.clone_dtoh(&matched_offset_dev)?;
+    let matched_pubkeys_x_flat = stream.clone_dtoh(&matched_pubkeys_x_dev)?;
+    let matched_endo_type = stream.clone_dtoh(&matched_endo_type_dev)?;
 
     // Build result vector
     let mut results = Vec::with_capacity(match_count);
@@ -866,7 +866,7 @@ mod tests {
 
         // Copy result back to host
         let result_vec = stream
-            .memcpy_dtov(&output_dev)
+            .clone_dtoh(&output_dev)
             .expect("Failed to copy result");
 
         println!("(p + 1) mod p test:");
@@ -938,7 +938,7 @@ mod tests {
 
         // Copy result back to host
         let result_vec = stream
-            .memcpy_dtov(&output_dev)
+            .clone_dtoh(&output_dev)
             .expect("Failed to copy result");
 
         println!("(p + 2) mod p test:");
@@ -1010,7 +1010,7 @@ mod tests {
 
         // Copy result back to host
         let result_vec = stream
-            .memcpy_dtov(&output_dev)
+            .clone_dtoh(&output_dev)
             .expect("Failed to copy result");
 
         println!("(2 * p) mod p test:");
@@ -1232,7 +1232,7 @@ mod tests {
 
         // Copy result back to host
         let result_vec = stream
-            .memcpy_dtov(&output_dev)
+            .clone_dtoh(&output_dev)
             .expect("Failed to copy result");
 
         println!("Step 10^2 (512-bit) reduction test:");
