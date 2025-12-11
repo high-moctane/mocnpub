@@ -1285,8 +1285,9 @@ extern "C" __global__ void __launch_bounds__(128, 4) generate_pubkeys_with_prefi
         uint64_t* x_coords[3] = { x, x_beta, x_beta2 };
 
         // === Prefix matching (check all 3 endomorphism variants) ===
-        bool found = false;
-        for (uint32_t endo = 0; endo < 3 && !found; endo++) {
+        // Return ALL matches (not just first) to enable thorough verification
+        // and detect bugs in any endo_type (especially endo_type=2 which had bugs before)
+        for (uint32_t endo = 0; endo < 3; endo++) {
             uint64_t x_upper = x_coords[endo][3];  // Most significant 64 bits
 
             for (uint32_t p = 0; p < num_prefixes; p++) {
@@ -1301,8 +1302,7 @@ extern "C" __global__ void __launch_bounds__(128, 4) generate_pubkeys_with_prefi
                             matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
                         }
                     }
-                    found = true;
-                    break;  // Only count once per key
+                    break;  // Found match for this endo_type, try next endo
                 }
             }
         }
