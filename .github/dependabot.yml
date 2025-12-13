@@ -1,8 +1,17 @@
 version: 2
 updates:
-  # Rust dependencies (Cargo)
+  # Rust dependencies (Cargo) - root
   - package-ecosystem: "cargo"
     directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
+
+  # Rust dependencies (Cargo) - fuzz
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
     schedule:
       interval: "weekly"
     commit-message:
