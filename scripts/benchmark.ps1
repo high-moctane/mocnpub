@@ -57,6 +57,7 @@ if (-not (Test-Path $exePath)) {
 
 # Start process
 $procArgs = @(
+    "mine",
     "--gpu",
     "--prefix", $Prefix,
     "--limit", "0",

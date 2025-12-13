@@ -751,11 +751,11 @@ fn run_verify(iterations: u64) -> io::Result<()> {
             let elapsed_secs = start.elapsed().as_secs_f64();
             let keys_per_sec = total_keys_checked as f64 / elapsed_secs;
             println!(
-                "✅ {} batches, {} keys checked, {} matches verified ({:.2}M keys/sec, {} errors)",
+                "✅ {} batches, {} keys checked, {} matches verified ({:.2}K keys/sec, {} errors)",
                 batch_count,
                 total_keys_checked,
                 total_matches_verified,
-                keys_per_sec / 1_000_000.0,
+                keys_per_sec / 1_000.0,
                 errors
             );
         }
@@ -772,7 +772,7 @@ fn run_verify(iterations: u64) -> io::Result<()> {
     println!("Total matches verified: {}", total_matches_verified);
     println!("Errors: {}", errors);
     println!("Elapsed: {:.2} sec", elapsed_secs);
-    println!("Rate: {:.2}M keys/sec", keys_per_sec / 1_000_000.0);
+    println!("Rate: {:.2}K keys/sec", keys_per_sec / 1_000.0);
 
     if errors > 0 {
         eprintln!("\n⚠️  {} errors detected!", errors);
