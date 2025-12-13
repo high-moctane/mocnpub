@@ -7,7 +7,8 @@ use std::time::Instant;
 
 // Import common functions from lib.rs
 use mocnpub_main::gpu::{
-    calculate_optimal_batch_size, generate_pubkeys_with_prefix_match, get_sm_count, init_gpu,
+    calculate_optimal_batch_size, generate_pubkeys_with_prefix_match, get_max_keys_per_thread,
+    get_sm_count, init_gpu,
 };
 use mocnpub_main::{add_u64x4_scalar, adjust_privkey_for_endomorphism, prefixes_to_bits};
 use mocnpub_main::{bytes_to_u64x4, pubkey_bytes_to_npub, u64x4_to_bytes};
@@ -57,14 +58,6 @@ enum Commands {
         #[arg(short, long, default_value = "0")]
         iterations: u64,
     },
-}
-
-/// Get keys_per_thread value determined at build time
-/// Can be specified via MAX_KEYS_PER_THREAD env var (default: 1500)
-fn get_max_keys_per_thread() -> u32 {
-    env!("MAX_KEYS_PER_THREAD")
-        .parse()
-        .expect("MAX_KEYS_PER_THREAD must be a valid u32")
 }
 
 fn main() -> io::Result<()> {
