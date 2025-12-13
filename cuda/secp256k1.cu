@@ -1125,7 +1125,7 @@ extern "C" __global__ void test_point_mult(
  *   - matched_endo_type: endomorphism type (0=original, 1=β, 2=β²) [max_matches]
  *   - match_count: number of matches found (atomic counter)
  */
-extern "C" __global__ void __launch_bounds__(128, 4) generate_pubkeys_with_prefix_match(
+extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefix_match(
     const uint64_t* base_keys,
     const uint64_t* patterns,
     const uint64_t* masks,
