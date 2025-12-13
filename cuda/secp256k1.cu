@@ -592,89 +592,9 @@ __device__ void _PointDouble(
 }
 
 /**
- * Point Addition in Jacobian coordinates: (X1, Y1, Z1) + (X2, Y2, Z2)
- *
- * Algorithm:
- *   U1 = X1 * Z2^2
- *   U2 = X2 * Z1^2
- *   S1 = Y1 * Z2^3
- *   S2 = Y2 * Z1^3
- *   H = U2 - U1
- *   R = S2 - S1
- *   X3 = R^2 - H^3 - 2*U1*H^2
- *   Y3 = R * (U1*H^2 - X3) - S1*H^3
- *   Z3 = Z1 * Z2 * H
- *
- * Cost: 12M + 4S (12 multiplications, 4 squarings)
- */
-__device__ void _PointAdd(
-    const uint64_t X1[4], const uint64_t Y1[4], const uint64_t Z1[4],
-    const uint64_t X2[4], const uint64_t Y2[4], const uint64_t Z2[4],
-    uint64_t X3[4], uint64_t Y3[4], uint64_t Z3[4]
-)
-{
-    uint64_t Z1_squared[4], Z1_cubed[4];
-    uint64_t Z2_squared[4], Z2_cubed[4];
-    uint64_t U1[4], U2[4], S1[4], S2[4];
-    uint64_t H[4], H_squared[4], H_cubed[4];
-    uint64_t R[4], R_squared[4];
-    uint64_t temp[4], temp2[4];
-
-    // Z1^2 and Z1^3
-    _ModSquare(Z1, Z1_squared);
-    _ModMult(Z1_squared, Z1, Z1_cubed);
-
-    // Z2^2 and Z2^3
-    _ModSquare(Z2, Z2_squared);
-    _ModMult(Z2_squared, Z2, Z2_cubed);
-
-    // U1 = X1 * Z2^2
-    _ModMult(X1, Z2_squared, U1);
-
-    // U2 = X2 * Z1^2
-    _ModMult(X2, Z1_squared, U2);
-
-    // S1 = Y1 * Z2^3
-    _ModMult(Y1, Z2_cubed, S1);
-
-    // S2 = Y2 * Z1^3
-    _ModMult(Y2, Z1_cubed, S2);
-
-    // H = U2 - U1
-    _ModSub(U2, U1, H);
-
-    // R = S2 - S1
-    _ModSub(S2, S1, R);
-
-    // H^2 and H^3
-    _ModSquare(H, H_squared);
-    _ModMult(H_squared, H, H_cubed);
-
-    // R^2
-    _ModSquare(R, R_squared);
-
-    // X3 = R^2 - H^3 - 2*U1*H^2
-    _ModMult(U1, H_squared, temp);       // temp = U1 * H^2
-    _ModAdd(temp, temp, temp2);          // temp2 = 2 * U1 * H^2
-    _ModSub(R_squared, H_cubed, temp);   // temp = R^2 - H^3
-    _ModSub(temp, temp2, X3);            // X3 = R^2 - H^3 - 2*U1*H^2
-
-    // Y3 = R * (U1*H^2 - X3) - S1*H^3
-    _ModMult(U1, H_squared, temp);       // temp = U1 * H^2
-    _ModSub(temp, X3, temp2);            // temp2 = U1*H^2 - X3
-    _ModMult(R, temp2, temp);            // temp = R * (U1*H^2 - X3)
-    _ModMult(S1, H_cubed, temp2);        // temp2 = S1 * H^3
-    _ModSub(temp, temp2, Y3);            // Y3 = R * (U1*H^2 - X3) - S1*H^3
-
-    // Z3 = Z1 * Z2 * H
-    _ModMult(Z1, Z2, temp);              // temp = Z1 * Z2
-    _ModMult(temp, H, Z3);               // Z3 = Z1 * Z2 * H
-}
-
-/**
  * Mixed Point Addition: (X1, Y1, Z1) + (X2, Y2, 1) where Z2 = 1 (Affine point)
  *
- * Optimized version of _PointAdd when the second point is in Affine coordinates.
+ * Optimized for adding an Affine point (Z=1) to a Jacobian point.
  * This is useful for adding G (generator point) which has Z=1.
  *
  * Simplifications when Z2 = 1:
@@ -683,7 +603,7 @@ __device__ void _PointAdd(
  *   - S1 = Y1 (no multiplication)
  *   - Z3 = Z1 * H (no multiplication by Z2)
  *
- * Cost: 7M + 3S (vs 12M + 4S for general _PointAdd) - about 40% faster!
+ * Cost: 7M + 3S (vs 12M + 4S for general point addition) - about 40% faster!
  */
 __device__ void _PointAddMixed(
     const uint64_t X1[4], const uint64_t Y1[4], const uint64_t Z1[4],  // Jacobian point
