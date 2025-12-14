@@ -247,9 +247,11 @@
 | GPU + `__launch_bounds__(128, 5)` | 3.356B keys/sec | 47,937x |
 | GPU + `_ModInv`/`_PointMult` 最適化 | 3.396B keys/sec | 48,512x |
 | GPU + batch_size 再々最適化（4000000） | 3.464B keys/sec | 49,486x |
-| **GPU + Multi-thread mining（threads=2, batch=2M）** | **3.49B keys/sec** | **49,857x** 🔥🔥🔥 |
+| GPU + Multi-thread mining（threads=2, batch=2M） | 3.49B keys/sec | 49,857x |
+| GPU + Multi-thread mining（2:1 batch ratio） | 3.50B keys/sec | 50,000x |
+| **GPU + Triple Buffering（3 streams）** | **3.70B keys/sec** | **52,857x** 🔥🔥🔥 |
 
-**8文字 prefix が約 6 分で見つかる！** 🎉
+**8文字 prefix が約 5 分で見つかる！** 🎉
 
 ---
 
@@ -275,6 +277,7 @@
 | **`_ModInv`/`_PointMult` 最適化** | **+1.2%**（`_ModSquare` 使用、`_PointAddMixed` 使用） 🔥 | ✅ 完了 |
 | **batch_size 再々最適化（4000000）** | **+2.0%**（Occupancy 向上に伴い最適値が増加、phase interleaving） 🔥 | ✅ 完了 |
 | **Multi-thread mining（threads=2, batch=2M）** | **+0.8%**（独立した mining loop で phase interleaving を強化） 🔥 | ✅ 完了 |
+| **Triple Buffering（3 streams）** | **+5.7%**（GPU 常時 100% 稼働、クロック安定化） 🔥🔥🔥 | ✅ 完了 |
 
 #### エンドモルフィズムの仕組み
 
@@ -425,7 +428,7 @@ ncu --set full ./mocnpub-main --gpu --prefix 0000
 
 ---
 
-## 🔬 Step 6: CUDA Streams & Phase Interleave（実験中）
+## 🔬 Step 7: CUDA Streams & Triple Buffering（完了）
 
 **作業ブランチ**: `feature/double-buffer`（参照用に残す）
 
@@ -435,7 +438,7 @@ ncu --set full ./mocnpub-main --gpu --prefix 0000
 
 | 戦法 | 目的 | 状態 |
 |------|------|------|
-| **ダブルバッファリング** | カーネル間の隙間を埋める | 🔬 実験中（効果確認済み）|
+| **トリプルバッファリング** | カーネル間の隙間を完全に埋める | ✅ 完了（+5.7%）🔥 |
 | **Phase Interleave** | 負荷の山を分散 | 💡 仮説段階 |
 
 ---
@@ -509,17 +512,29 @@ Warp 3:       [PointAdd...]
 
 ---
 
-### 今後の方針
+### トリプルバッファリング（2025-12-15 完了）🔥
 
-**Step 6-1: 1 thread 2 stream お手玉版**
-- 本来のダブルバッファリングを実装
-- 同じ Context 内で 2 つの Stream を交互に使用
-- `synchronize()` の待ち時間を完全に隠蔽
+**目的**：カーネル間の隙間を完全に埋める（お手玉を 3 個に）
 
-**Step 6-2: 複数ダブルバッファリングの並列実行**
-- Step 6-1 ができてから
-- 複数の mining loop を並列実行
-- Phase Interleave の効果を検証
+**実装**：
+- `TripleBufferMiner` 構造体を追加
+- 3 つの Stream を使用（`stream.fork()` で作成）
+- 3 つのホストバッファをローテーション
+- `launch_single(idx)` / `collect_single(idx)` で個別操作
+
+**結果**：
+- **3.70B keys/sec 達成！**（+5.7%）🔥
+- nsys で確認：カーネルが隙間なくびっちり詰まっている
+- GPU 使用率が安定して 100% 近くに
+
+**発見**：
+- 隙間を埋めることで、GPU の温度が安定
+- 温度が安定 → クロックも安定 → パフォーマンス安定
+- **「隙間を埋める」以上の効果があった！**
+
+**既知のバグ**：
+- エンドモルフィズム（endo_type=1, 2）で pubkey_x の不一致が発生
+- 次のセッションで調査予定
 
 ---
 
