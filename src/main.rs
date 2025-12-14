@@ -227,30 +227,18 @@ fn mining_loop(
         vec![[0u64; 4]; batch_size],
     ];
 
-    // Generate initial batches for buffers 0 and 1
-    for buf_idx in 0..2 {
+    // Generate and launch ALL 3 initial batches
+    for buf_idx in 0..3 {
         for i in 0..batch_size {
             rng.fill_bytes(&mut host_bytes[buf_idx][i]);
             host_u64[buf_idx][i] = bytes_to_u64x4(&host_bytes[buf_idx][i]);
         }
-    }
-
-    // Launch initial batches (0 and 1 are now in GPU)
-    if let Err(e) = miner.launch_single(0, &host_u64[0]) {
-        eprintln!("❌ GPU kernel launch error: {}", e);
-        std::process::exit(1);
-    }
-    if let Err(e) = miner.launch_single(1, &host_u64[1]) {
-        eprintln!("❌ GPU kernel launch error: {}", e);
-        std::process::exit(1);
+        if let Err(e) = miner.launch_single(buf_idx, &host_u64[buf_idx]) {
+            eprintln!("❌ GPU kernel launch error: {}", e);
+            std::process::exit(1);
+        }
     }
     println!("🎯 Triple buffering enabled (always 2 kernels in GPU queue)");
-
-    // Generate batch for buffer 2 while 0 and 1 are processing
-    for i in 0..batch_size {
-        rng.fill_bytes(&mut host_bytes[2][i]);
-        host_u64[2][i] = bytes_to_u64x4(&host_bytes[2][i]);
-    }
 
     // Rotation index: which buffer to collect next
     // Pattern: collect(N) → launch(N) → RNG(N) → rotate
@@ -268,31 +256,17 @@ fn mining_loop(
             }
         };
 
-        // 2. Launch next batch for this stream (it's now free)
-        // Use the data that was generated 2 rotations ago (ready to use)
-        let ready_data_idx = (collect_idx + 2) % 3;
-        if let Err(e) = miner.launch_single(collect_idx, &host_u64[ready_data_idx]) {
-            eprintln!("❌ GPU kernel launch error: {}", e);
-            std::process::exit(1);
-        }
-
         // Update attempt count (endomorphism checks 3 X-coordinates per key)
         total_count += (batch_size as u64) * (keys_per_thread as u64) * 3;
 
-        // 3. Process matched results BEFORE RNG overwrites the buffer!
-        // Results are from the buffer we just collected (host_u64[collect_idx])
-        let all_matches: Vec<_> = matches
-            .into_iter()
-            .map(|m| (m, &host_u64[collect_idx]))
-            .collect();
-
-        for (m, privkeys_u64) in all_matches {
+        // 2. Process matched results
+        // Now we use m.base_key directly (returned from GPU), no need for host-side buffer lookup
+        for m in matches {
             found_count += 1;
 
             // Recover secret key: (base_key + offset) * λ^endo_type mod n
             // endo_type: 0 = original, 1 = λ*k, 2 = λ²*k (for endomorphism)
-            let base_key = &privkeys_u64[m.base_idx as usize];
-            let key_with_offset = add_u64x4_scalar(base_key, m.offset);
+            let key_with_offset = add_u64x4_scalar(&m.base_key, m.offset);
             let actual_key_u64 = adjust_privkey_for_endomorphism(&key_with_offset, m.endo_type);
             let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
 
@@ -397,7 +371,15 @@ fn mining_loop(
             );
         }
 
-        // 4. Generate new RNG data into the buffer we just processed
+        // 3. Launch next batch for this stream (it's now free after collect)
+        // Use the data that was generated 2 rotations ago (ready to use)
+        let ready_data_idx = (collect_idx + 2) % 3;
+        if let Err(e) = miner.launch_single(collect_idx, &host_u64[ready_data_idx]) {
+            eprintln!("❌ GPU kernel launch error: {}", e);
+            std::process::exit(1);
+        }
+
+        // 5. Generate new RNG data into the buffer we just processed
         // This buffer is now safe to overwrite (results already extracted)
         // It will be used 2 rotations later
         for i in 0..batch_size {
@@ -405,7 +387,7 @@ fn mining_loop(
             host_u64[collect_idx][i] = bytes_to_u64x4(&host_bytes[collect_idx][i]);
         }
 
-        // 5. Rotate to next buffer
+        // 6. Rotate to next buffer
         collect_idx = (collect_idx + 1) % 3;
     }
 }

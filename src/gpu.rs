@@ -412,6 +412,7 @@ struct StreamBuffer {
     matched_base_idx_dev: cudarc::driver::CudaSlice<u32>,
     matched_offset_dev: cudarc::driver::CudaSlice<u32>,
     matched_pubkeys_x_dev: cudarc::driver::CudaSlice<u64>,
+    matched_base_keys_dev: cudarc::driver::CudaSlice<u64>,
     matched_endo_type_dev: cudarc::driver::CudaSlice<u32>,
     match_count_dev: cudarc::driver::CudaSlice<u32>,
     num_threads: usize,
@@ -426,6 +427,8 @@ pub struct GpuMatch {
     pub offset: u32,
     /// Public key x-coordinate
     pub pubkey_x: [u64; 4],
+    /// Base secret key (copied from GPU at match time)
+    pub base_key: [u64; 4],
     /// Endomorphism type: 0 = original, 1 = β*x, 2 = β²*x
     /// Used to adjust the private key with λ or λ²
     pub endo_type: u32,
@@ -505,6 +508,7 @@ impl DoubleBufferMiner {
             matched_base_idx_dev: stream_a.alloc_zeros::<u32>(max_matches as usize)?,
             matched_offset_dev: stream_a.alloc_zeros::<u32>(max_matches as usize)?,
             matched_pubkeys_x_dev: stream_a.alloc_zeros::<u64>(max_matches as usize * 4)?,
+            matched_base_keys_dev: stream_a.alloc_zeros::<u64>(max_matches as usize * 4)?,
             matched_endo_type_dev: stream_a.alloc_zeros::<u32>(max_matches as usize)?,
             match_count_dev: stream_a.alloc_zeros::<u32>(1)?,
             num_threads: batch_size,
@@ -516,6 +520,7 @@ impl DoubleBufferMiner {
             matched_base_idx_dev: stream_b.alloc_zeros::<u32>(max_matches as usize)?,
             matched_offset_dev: stream_b.alloc_zeros::<u32>(max_matches as usize)?,
             matched_pubkeys_x_dev: stream_b.alloc_zeros::<u64>(max_matches as usize * 4)?,
+            matched_base_keys_dev: stream_b.alloc_zeros::<u64>(max_matches as usize * 4)?,
             matched_endo_type_dev: stream_b.alloc_zeros::<u32>(max_matches as usize)?,
             match_count_dev: stream_b.alloc_zeros::<u32>(1)?,
             num_threads: batch_size,
@@ -698,6 +703,7 @@ impl DoubleBufferMiner {
         builder.arg(&mut buf.matched_base_idx_dev);
         builder.arg(&mut buf.matched_offset_dev);
         builder.arg(&mut buf.matched_pubkeys_x_dev);
+        builder.arg(&mut buf.matched_base_keys_dev);
         builder.arg(&mut buf.matched_endo_type_dev);
         builder.arg(&mut buf.match_count_dev);
         builder.arg(&num_threads_u32);
@@ -726,17 +732,21 @@ impl DoubleBufferMiner {
         let matched_base_idx = stream.clone_dtoh(&buf.matched_base_idx_dev)?;
         let matched_offset = stream.clone_dtoh(&buf.matched_offset_dev)?;
         let matched_pubkeys_x_flat = stream.clone_dtoh(&buf.matched_pubkeys_x_dev)?;
+        let matched_base_keys_flat = stream.clone_dtoh(&buf.matched_base_keys_dev)?;
         let matched_endo_type = stream.clone_dtoh(&buf.matched_endo_type_dev)?;
 
         let mut results = Vec::with_capacity(match_count);
         for i in 0..match_count {
             let mut pubkey_x = [0u64; 4];
             pubkey_x.copy_from_slice(&matched_pubkeys_x_flat[i * 4..(i + 1) * 4]);
+            let mut base_key = [0u64; 4];
+            base_key.copy_from_slice(&matched_base_keys_flat[i * 4..(i + 1) * 4]);
 
             results.push(GpuMatch {
                 base_idx: matched_base_idx[i],
                 offset: matched_offset[i],
                 pubkey_x,
+                base_key,
                 endo_type: matched_endo_type[i],
             });
         }
@@ -786,6 +796,7 @@ impl TripleBufferMiner {
                 matched_base_idx_dev: stream.alloc_zeros::<u32>(max_matches as usize)?,
                 matched_offset_dev: stream.alloc_zeros::<u32>(max_matches as usize)?,
                 matched_pubkeys_x_dev: stream.alloc_zeros::<u64>(max_matches as usize * 4)?,
+                matched_base_keys_dev: stream.alloc_zeros::<u64>(max_matches as usize * 4)?,
                 matched_endo_type_dev: stream.alloc_zeros::<u32>(max_matches as usize)?,
                 match_count_dev: stream.alloc_zeros::<u32>(1)?,
                 num_threads: batch_size,
@@ -852,6 +863,7 @@ impl TripleBufferMiner {
         builder.arg(&mut buf.matched_base_idx_dev);
         builder.arg(&mut buf.matched_offset_dev);
         builder.arg(&mut buf.matched_pubkeys_x_dev);
+        builder.arg(&mut buf.matched_base_keys_dev);
         builder.arg(&mut buf.matched_endo_type_dev);
         builder.arg(&mut buf.match_count_dev);
         builder.arg(&num_threads_u32);
@@ -887,17 +899,21 @@ impl TripleBufferMiner {
         let matched_base_idx = stream.clone_dtoh(&buf.matched_base_idx_dev)?;
         let matched_offset = stream.clone_dtoh(&buf.matched_offset_dev)?;
         let matched_pubkeys_x_flat = stream.clone_dtoh(&buf.matched_pubkeys_x_dev)?;
+        let matched_base_keys_flat = stream.clone_dtoh(&buf.matched_base_keys_dev)?;
         let matched_endo_type = stream.clone_dtoh(&buf.matched_endo_type_dev)?;
 
         let mut results = Vec::with_capacity(match_count);
         for i in 0..match_count {
             let mut pubkey_x = [0u64; 4];
             pubkey_x.copy_from_slice(&matched_pubkeys_x_flat[i * 4..(i + 1) * 4]);
+            let mut base_key = [0u64; 4];
+            base_key.copy_from_slice(&matched_base_keys_flat[i * 4..(i + 1) * 4]);
 
             results.push(GpuMatch {
                 base_idx: matched_base_idx[i],
                 offset: matched_offset[i],
                 pubkey_x,
+                base_key,
                 endo_type: matched_endo_type[i],
             });
         }
@@ -965,6 +981,7 @@ pub fn generate_pubkeys_with_prefix_match(
     let mut matched_base_idx_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
     let mut matched_offset_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
     let mut matched_pubkeys_x_dev = stream.alloc_zeros::<u64>(max_matches as usize * 4)?;
+    let mut matched_base_keys_dev = stream.alloc_zeros::<u64>(max_matches as usize * 4)?;
     let mut matched_endo_type_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
     let mut match_count_dev = stream.alloc_zeros::<u32>(1)?;
 
@@ -993,6 +1010,7 @@ pub fn generate_pubkeys_with_prefix_match(
     builder.arg(&mut matched_base_idx_dev);
     builder.arg(&mut matched_offset_dev);
     builder.arg(&mut matched_pubkeys_x_dev);
+    builder.arg(&mut matched_base_keys_dev);
     builder.arg(&mut matched_endo_type_dev); // Endomorphism type (0=original, 1=β, 2=β²)
     builder.arg(&mut match_count_dev);
     builder.arg(&num_threads_u32);
@@ -1014,6 +1032,7 @@ pub fn generate_pubkeys_with_prefix_match(
     let matched_base_idx = stream.clone_dtoh(&matched_base_idx_dev)?;
     let matched_offset = stream.clone_dtoh(&matched_offset_dev)?;
     let matched_pubkeys_x_flat = stream.clone_dtoh(&matched_pubkeys_x_dev)?;
+    let matched_base_keys_flat = stream.clone_dtoh(&matched_base_keys_dev)?;
     let matched_endo_type = stream.clone_dtoh(&matched_endo_type_dev)?;
 
     // Build result vector
@@ -1021,11 +1040,14 @@ pub fn generate_pubkeys_with_prefix_match(
     for i in 0..match_count {
         let mut pubkey_x = [0u64; 4];
         pubkey_x.copy_from_slice(&matched_pubkeys_x_flat[i * 4..(i + 1) * 4]);
+        let mut base_key = [0u64; 4];
+        base_key.copy_from_slice(&matched_base_keys_flat[i * 4..(i + 1) * 4]);
 
         results.push(GpuMatch {
             base_idx: matched_base_idx[i],
             offset: matched_offset[i],
             pubkey_x,
+            base_key,
             endo_type: matched_endo_type[i],
         });
     }
@@ -1098,6 +1120,7 @@ pub fn generate_pubkeys_with_prefix_match_double_buffer(
                 matched_base_idx_dev: stream.alloc_zeros::<u32>(1)?,
                 matched_offset_dev: stream.alloc_zeros::<u32>(1)?,
                 matched_pubkeys_x_dev: stream.alloc_zeros::<u64>(4)?,
+                matched_base_keys_dev: stream.alloc_zeros::<u64>(4)?,
                 matched_endo_type_dev: stream.alloc_zeros::<u32>(1)?,
                 match_count_dev: stream.alloc_zeros::<u32>(1)?,
                 num_threads: 0,
@@ -1110,6 +1133,7 @@ pub fn generate_pubkeys_with_prefix_match_double_buffer(
         let matched_base_idx_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
         let matched_offset_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
         let matched_pubkeys_x_dev = stream.alloc_zeros::<u64>(max_matches as usize * 4)?;
+        let matched_base_keys_dev = stream.alloc_zeros::<u64>(max_matches as usize * 4)?;
         let matched_endo_type_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
         let match_count_dev = stream.alloc_zeros::<u32>(1)?;
 
@@ -1120,6 +1144,7 @@ pub fn generate_pubkeys_with_prefix_match_double_buffer(
             matched_base_idx_dev,
             matched_offset_dev,
             matched_pubkeys_x_dev,
+            matched_base_keys_dev,
             matched_endo_type_dev,
             match_count_dev,
             num_threads,
@@ -1152,6 +1177,7 @@ pub fn generate_pubkeys_with_prefix_match_double_buffer(
         builder.arg(&mut buf.matched_base_idx_dev);
         builder.arg(&mut buf.matched_offset_dev);
         builder.arg(&mut buf.matched_pubkeys_x_dev);
+        builder.arg(&mut buf.matched_base_keys_dev);
         builder.arg(&mut buf.matched_endo_type_dev);
         builder.arg(&mut buf.match_count_dev);
         builder.arg(&num_threads_u32);
@@ -1183,17 +1209,21 @@ pub fn generate_pubkeys_with_prefix_match_double_buffer(
         let matched_base_idx = stream.clone_dtoh(&buf.matched_base_idx_dev)?;
         let matched_offset = stream.clone_dtoh(&buf.matched_offset_dev)?;
         let matched_pubkeys_x_flat = stream.clone_dtoh(&buf.matched_pubkeys_x_dev)?;
+        let matched_base_keys_flat = stream.clone_dtoh(&buf.matched_base_keys_dev)?;
         let matched_endo_type = stream.clone_dtoh(&buf.matched_endo_type_dev)?;
 
         let mut results = Vec::with_capacity(match_count);
         for i in 0..match_count {
             let mut pubkey_x = [0u64; 4];
             pubkey_x.copy_from_slice(&matched_pubkeys_x_flat[i * 4..(i + 1) * 4]);
+            let mut base_key = [0u64; 4];
+            base_key.copy_from_slice(&matched_base_keys_flat[i * 4..(i + 1) * 4]);
 
             results.push(GpuMatch {
                 base_idx: matched_base_idx[i],
                 offset: matched_offset[i],
                 pubkey_x,
+                base_key,
                 endo_type: matched_endo_type[i],
             });
         }

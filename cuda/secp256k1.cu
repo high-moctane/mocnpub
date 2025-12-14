@@ -1050,6 +1050,7 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefi
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
     uint64_t* matched_pubkeys_x,
+    uint64_t* matched_base_keys,
     uint32_t* matched_endo_type,
     uint32_t* match_count,
     uint32_t num_threads,
@@ -1169,6 +1170,7 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefi
                         matched_endo_type[slot] = endo;  // 0=original, 1=β, 2=β²
                         for (int j = 0; j < 4; j++) {
                             matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
+                            matched_base_keys[slot * 4 + j] = base_keys[idx * 4 + j];
                         }
                     }
                     break;  // Found match for this endo_type, try next endo
