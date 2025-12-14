@@ -1,8 +1,8 @@
 # mocnpub タスクリスト 📋
 
 **作成日**: 2025-11-14
-**最終更新**: 2025-12-13
-**進捗**: Step 0〜5 完了！🎉 3.464B keys/sec 達成！プロジェクト完成 🏁
+**最終更新**: 2025-12-14
+**進捗**: Step 0〜6 完了！Step 7（CUDA Streams & Phase Interleave）実験中 🔬
 
 ---
 
@@ -17,6 +17,8 @@
 | Step 3 | GPU 版に移行（16倍高速化）| ✅ 完了 |
 | Step 4 | GPU カーネル高速化（45,000倍！）| ✅ 完了 |
 | Step 5 | 最終チューニング & 完成度向上 | ✅ 完了 |
+| Step 6 | コードクリーンアップ（CPU モード削除）| ✅ 完了 |
+| Step 7 | CUDA Streams & Phase Interleave | 🔬 実験中 |
 
 ---
 
@@ -39,7 +41,9 @@
 | GPU + `_PointAddMixed` 最適化（7M+3S） | 3.326B keys/sec | 47,514x |
 | GPU + `__launch_bounds__(128, 5)` | 3.356B keys/sec | 47,937x |
 | GPU + `_ModInv`/`_PointMult` 最適化 | 3.396B keys/sec | 48,512x |
-| **GPU + batch_size 再々最適化（4000000）** | **3.464B keys/sec** | **49,486x** 🔥🔥🔥 |
+| GPU + batch_size 再々最適化（4000000） | 3.464B keys/sec | 49,486x |
+| GPU + Multi-thread mining（threads=2, batch=2M） | 3.49B keys/sec | 49,857x |
+| **GPU + Multi-thread mining（2:1 batch ratio）** | **3.50B keys/sec** | **50,000x** 🔥🔥🔥 |
 
 **8文字 prefix が約 6 分で見つかる！** 🎉
 
@@ -186,6 +190,13 @@ SoA（Structure of Arrays）最適化を実装：
 
 ### ✅ 完了した最適化
 
+- **Multi-thread mining（threads=2, batch=2M）**（2025-12-13）🔥
+  - 独立した mining loop を複数スレッドで実行
+  - 各スレッドで微妙に異なる batch_size を使用（phase interleaving 強化）
+  - 理論上は 0.1% の改善のはずが、実測で +0.8% の効果
+  - **Phase interleaving の効果が実証された！**
+  - 結果：3.464B → **3.49B keys/sec**（+0.8%）🔥
+
 - **batch_size 再々最適化（4000000）**（2025-12-13）🔥
   - `__launch_bounds__(128, 5)` で Occupancy が 33% → 41% に向上した影響
   - より多くの並列実行が可能になり、最適な batch_size が増加
@@ -322,6 +333,43 @@ CPU（Ryzen 9800X3D、8コア16スレッド）で連続秘密鍵戦法を実装�
 - **main.rs がシンプルに**（CPU/GPU の分岐がなくなった）
 - **メンテナンスコスト減**
 - **ユーザーが誤って遅い CPU モードを使うリスクがなくなる**
+
+---
+
+## 🔬 Step 7: CUDA Streams & Phase Interleave（実験中）
+
+**作業ブランチ**: `feature/double-buffer`（参照用に残す）
+
+### 概念整理
+
+**2つの別々の目標**：
+
+| 戦法 | 目的 | 状態 |
+|------|------|------|
+| **ダブルバッファリング** | カーネル間の隙間を埋める | 🔬 実験中（効果確認済み）|
+| **Phase Interleave** | 負荷の山を分散 | 💡 仮説段階 |
+
+### feature/double-buffer での実験結果（2025-12-14）
+
+| 実験 | 結果 |
+|------|------|
+| PTX キャッシュ | `cuModuleUnload` 問題を解決 ✅ |
+| Pinned Memory | Memory 0.2% → <0.1%（効果は小さい）|
+| Multi-thread mining（独立 context） | 隙間は埋まったが **並列実行はできず** |
+| 2:1 batch_size 比率 | **3.50B keys/sec** 達成 🔥 |
+
+**重要な発見**：
+- 独立した CUDA Context を使っても、カーネルは並列実行されなかった
+- シリアル実行だが、隙間はほぼ埋まった → 隙間埋め効果で +0.3% 改善
+
+### 今後のタスク
+
+| # | タスク | 内容 | 状態 |
+|---|--------|------|------|
+| 1 | **1 thread 2 stream お手玉版** | 本来のダブルバッファリングを実装 | 📋 TODO |
+| 2 | **複数ダブルバッファリングの並列実行** | Phase Interleave の検証 | 📋 TODO |
+
+**詳細は CLAUDE.md を参照**
 
 ---
 
