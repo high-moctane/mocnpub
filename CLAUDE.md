@@ -249,7 +249,8 @@
 | GPU + batch_size 再々最適化（4000000） | 3.464B keys/sec | 49,486x |
 | GPU + Multi-thread mining（threads=2, batch=2M） | 3.49B keys/sec | 49,857x |
 | GPU + Multi-thread mining（2:1 batch ratio） | 3.50B keys/sec | 50,000x |
-| **GPU + Triple Buffering（3 streams）** | **3.70B keys/sec** | **52,857x** 🔥🔥🔥 |
+| GPU + Triple Buffering（3 streams） | 3.70B keys/sec | 52,857x |
+| **GPU + Sequential Key Strategy（VRAM 99.99%削減、1600 keys/thread）** | **3.67B keys/sec** | **52,429x** 🔥 |
 
 **8文字 prefix が約 5 分で見つかる！** 🎉
 

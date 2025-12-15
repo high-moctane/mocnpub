@@ -12,11 +12,11 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cuda_dir = manifest_dir.join("cuda");
 
-    // Read MAX_KEYS_PER_THREAD from environment variable (default: 1500)
+    // Read MAX_KEYS_PER_THREAD from environment variable (default: 1600)
     // Rebuild when this env var changes
     println!("cargo:rerun-if-env-changed=MAX_KEYS_PER_THREAD");
     let max_keys_per_thread =
-        env::var("MAX_KEYS_PER_THREAD").unwrap_or_else(|_| "1500".to_string());
+        env::var("MAX_KEYS_PER_THREAD").unwrap_or_else(|_| "1600".to_string());
 
     // Pass to Rust code via cargo:rustc-env
     println!(

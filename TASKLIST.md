@@ -2,7 +2,7 @@
 
 **作成日**: 2025-11-14
 **最終更新**: 2025-12-15
-**進捗**: Step 0〜7 完了！🎉 Triple Buffering で **3.70B keys/sec** 達成！🔥
+**進捗**: Step 0〜7 完了！🎉 Sequential Key Strategy で **3.67B keys/sec** 達成（VRAM 99.99%削減）！🔥
 
 ---
 
@@ -18,7 +18,7 @@
 | Step 4 | GPU カーネル高速化（45,000倍！）| ✅ 完了 |
 | Step 5 | 最終チューニング & 完成度向上 | ✅ 完了 |
 | Step 6 | コードクリーンアップ（CPU モード削除）| ✅ 完了 |
-| Step 7 | Triple Buffering（+5.7%、3.70B keys/sec）| ✅ 完了 🔥 |
+| Step 7 | Triple Buffering + Sequential Key Strategy（3.67B、VRAM 99.99%削減）| ✅ 完了 🔥 |
 
 ---
 
@@ -44,7 +44,8 @@
 | GPU + batch_size 再々最適化（4000000） | 3.464B keys/sec | 49,486x |
 | GPU + Multi-thread mining（threads=2, batch=2M） | 3.49B keys/sec | 49,857x |
 | GPU + Multi-thread mining（2:1 batch ratio） | 3.50B keys/sec | 50,000x |
-| **GPU + Triple Buffering（3 streams）** | **3.70B keys/sec** | **52,857x** 🔥🔥🔥 |
+| GPU + Triple Buffering（3 streams） | 3.70B keys/sec | 52,857x |
+| **GPU + Sequential Key Strategy（VRAM 99.99%削減、1600 keys/thread）** | **3.67B keys/sec** | **52,429x** 🔥 |
 
 **8文字 prefix が約 5 分で見つかる！** 🎉
 
@@ -337,24 +338,32 @@ CPU（Ryzen 9800X3D、8コア16スレッド）で連続秘密鍵戦法を実装�
 
 ---
 
-## ✅ Step 7: Triple Buffering（2025-12-15 完了）🔥
+## ✅ Step 7: Triple Buffering + Sequential Key Strategy（2025-12-15 完了）🔥
 
 ### 実装内容
 
-**トリプルバッファリング**：3 つの Stream で GPU を常時 100% 稼働
+**Phase 1: トリプルバッファリング**：3 つの Stream で GPU を常時 100% 稼働
 
 - `TripleBufferMiner` 構造体を追加（`gpu.rs`）
 - 3 つの Stream を `stream.fork()` で作成
 - 3 つのホストバッファをローテーション
 - `launch_single(idx)` / `collect_single(idx)` で個別操作
 
+**Phase 2: 連続秘密鍵戦略**：VRAM 消費を 99.99% 削減
+
+- `SequentialTripleBufferMiner` 構造体を追加
+- バッチ全体で 1 つの base_key だけを渡す
+- 各スレッドは `base_key + global_idx * MAX_KEYS_PER_THREAD` から計算開始
+- VRAM: 384 MB → 96 bytes（99.99% 削減！）
+- MAX_KEYS_PER_THREAD のデフォルト: 1500 → 1600 に最適化
+
 ### 結果 🎉
 
-| 指標 | 値 |
-|------|-----|
-| **スループット** | **3.70B keys/sec** |
-| **CPU 比** | **52,857x** |
-| **改善幅** | **+5.7%**（3.50B → 3.70B）|
+| 指標 | Triple Buffering | + Sequential Key |
+|------|------------------|------------------|
+| **スループット** | 3.70B keys/sec | **3.67B keys/sec** |
+| **CPU 比** | 52,857x | **52,429x** |
+| **VRAM（base_keys）** | 384 MB | **96 bytes** 🔥 |
 
 ### nsys 確認結果
 
