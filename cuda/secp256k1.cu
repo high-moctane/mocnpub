@@ -775,6 +775,65 @@ __device__ void _PointMult(
     }
 }
 
+/**
+ * Compute base_pubkey + idx * dG using precomputed dG table
+ *
+ * Instead of _PointMult(k, G) with 256 double-and-add operations,
+ * we use a precomputed table of dG, 2*dG, 4*dG, ..., 2^23*dG
+ * and perform at most 24 point additions based on the bits of idx.
+ *
+ * This reduces ~384 operations to ~12 operations (on average).
+ *
+ * @param idx             Thread index (0 to batch_size/MAX_KEYS_PER_THREAD - 1)
+ * @param dG_table        Precomputed table: [dG, 2*dG, 4*dG, ..., 2^23*dG]
+ *                        Layout: 24 entries, each entry is (X[4], Y[4]) = 8 uint64_t
+ *                        Total: 24 * 8 = 192 uint64_t values
+ * @param base_pubkey_x   X coordinate of base_pubkey (Affine)
+ * @param base_pubkey_y   Y coordinate of base_pubkey (Affine)
+ * @param Rx, Ry, Rz      Output: base_pubkey + idx * dG (Jacobian)
+ */
+__device__ void _PointMultByIndex(
+    uint32_t idx,
+    const uint64_t* dG_table,
+    const uint64_t base_pubkey_x[4],
+    const uint64_t base_pubkey_y[4],
+    uint64_t Rx[4], uint64_t Ry[4], uint64_t Rz[4]
+)
+{
+    // Initialize result to base_pubkey (Jacobian with Z = 1)
+    for (int i = 0; i < 4; i++) {
+        Rx[i] = base_pubkey_x[i];
+        Ry[i] = base_pubkey_y[i];
+    }
+    Rz[0] = 1; Rz[1] = 0; Rz[2] = 0; Rz[3] = 0;
+
+    // If idx == 0, no additions needed, just return base_pubkey
+    if (idx == 0) {
+        return;
+    }
+
+    // Add dG_table[bit] for each set bit in idx
+    for (int bit = 0; bit < 24; bit++) {
+        if ((idx >> bit) & 1) {
+            // Load dG_table[bit] (Affine coordinates)
+            uint64_t dG_x[4], dG_y[4];
+            for (int i = 0; i < 4; i++) {
+                dG_x[i] = dG_table[bit * 8 + i];
+                dG_y[i] = dG_table[bit * 8 + 4 + i];
+            }
+
+            // Add: R = R + dG_table[bit]
+            uint64_t tempX[4], tempY[4], tempZ[4];
+            _PointAddMixed(Rx, Ry, Rz, dG_x, dG_y, tempX, tempY, tempZ);
+            for (int i = 0; i < 4; i++) {
+                Rx[i] = tempX[i];
+                Ry[i] = tempY[i];
+                Rz[i] = tempZ[i];
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Production Kernels
 // ============================================================================
@@ -1221,14 +1280,17 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefi
  *   - match_count: number of matches found (atomic counter)
  */
 extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential(
-    const uint64_t* base_key,      // Single base key [4 limbs]
+    const uint64_t* base_key,       // Single base key [4 limbs]
+    const uint64_t* base_pubkey_x,  // base_key * G, X coordinate [4 limbs]
+    const uint64_t* base_pubkey_y,  // base_key * G, Y coordinate [4 limbs]
+    const uint64_t* dG_table,       // Precomputed table [24 entries * 8 limbs = 192 limbs]
     const uint64_t* patterns,
     const uint64_t* masks,
     uint32_t num_prefixes,
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
     uint64_t* matched_pubkeys_x,
-    uint64_t* matched_secret_keys, // Actual secret keys (not base_key)
+    uint64_t* matched_secret_keys,  // Actual secret keys (not base_key)
     uint32_t* matched_endo_type,
     uint32_t* match_count,
     uint32_t num_threads,
@@ -1279,9 +1341,11 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
 
     // === Phase 1: Generate all points in Jacobian coordinates ===
 
-    // First point: P = k * G (heavy operation)
+    // First point: P = base_pubkey + idx * dG (fast table lookup!)
+    // Instead of _PointMult(k, G) with 256 double-and-add operations,
+    // we use precomputed dG table and perform at most 24 point additions.
     uint64_t Px[4], Py[4], Pz[4];
-    _PointMult(k, _Gx, _Gy, Px, Py, Pz);
+    _PointMultByIndex(idx, dG_table, base_pubkey_x, base_pubkey_y, Px, Py, Pz);
 
     for (int i = 0; i < 4; i++) {
         X_arr[0][i] = Px[i];

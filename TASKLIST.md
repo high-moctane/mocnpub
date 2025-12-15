@@ -19,6 +19,7 @@
 | Step 5 | 最終チューニング & 完成度向上 | ✅ 完了 |
 | Step 6 | コードクリーンアップ（CPU モード削除）| ✅ 完了 |
 | Step 7 | Triple Buffering + Sequential Key Strategy（3.67B、VRAM 99.99%削減）| ✅ 完了 🔥 |
+| Step 8 | dG テーブルプリコンピュート（_PointMult 削減）| 🚧 進行中 |
 
 ---
 
@@ -388,6 +389,50 @@ CPU（Ryzen 9800X3D、8コア16スレッド）で連続秘密鍵戦法を実装�
 - 次のセッションで調査予定
 
 **詳細は CLAUDE.md を参照**
+
+---
+
+## 🚀 Step 8: dG テーブルプリコンピュート（_PointMult 削減）
+
+**アイデア**：連続秘密鍵戦略で、各スレッドの秘密鍵の間隔が `MAX_KEYS_PER_THREAD` に固定されていることを活用！
+
+### 現状の問題
+
+各スレッドが `_PointMult(base_key + global_idx * MAX_KEYS_PER_THREAD, G)` を呼んで最初の公開鍵を計算
+→ 256 回のダブル＆アッド（重い！）
+
+### 新しいアプローチ
+
+1. **CPU 側で事前計算**：
+   - `dG = MAX_KEYS_PER_THREAD * G`（定数）
+   - `dG_table[i] = 2^i * dG`（24 エントリ、最大 1600 万スレッド対応）
+   - `base_key` と `base_pubkey = base_key * G`
+
+2. **GPU 側で高速計算**：
+   - 秘密鍵: `base_key + global_idx * MAX_KEYS_PER_THREAD`（スカラー加算）
+   - 公開鍵: `base_pubkey + global_idx * dG`
+   - `global_idx * dG` は dG_table からルックアップ + PointAdd（最大 24 回）
+
+### 期待効果
+
+| 方式 | ダブル | アッド | 合計 |
+|------|--------|--------|------|
+| 従来の `_PointMult(256-bit)` | 256回 | ~128回 | ~384回 |
+| **新方式（dG_table）** | **0回** | **~12回** | **~12回** |
+
+**約 30 倍の削減！** 🔥
+
+### タスク一覧
+
+| # | タスク | 状態 |
+|---|--------|------|
+| 1 | CUDA: `_PointMultByIndex` 関数を作成（テーブルルックアップ + PointAdd） | ⬜ |
+| 2 | CUDA: `_BatchGeneratePublicKeysWithPrefixMatch` を修正して `_PointMult` を削除 | ⬜ |
+| 3 | Rust: dG テーブル（24 エントリ）を計算する関数を作成 | ⬜ |
+| 4 | Rust: base_key と base_pubkey を計算してカーネルに渡す | ⬜ |
+| 5 | テスト: 正しい npub が生成されることを確認 | ⬜ |
+| 6 | ベンチマーク: パフォーマンス測定 | ⬜ |
+| 7 | 最適化: 必要なら constant memory に移行 | ⬜ |
 
 ---
 

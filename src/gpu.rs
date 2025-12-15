@@ -7,6 +7,7 @@
 use cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT;
 use cudarc::driver::{CudaContext, CudaFunction, CudaModule, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::Ptx;
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use std::sync::Arc;
 
 /// Get MAX_KEYS_PER_THREAD (compile-time constant)
@@ -15,6 +16,87 @@ pub fn get_max_keys_per_thread() -> u32 {
     env!("MAX_KEYS_PER_THREAD")
         .parse()
         .expect("MAX_KEYS_PER_THREAD must be a valid u32")
+}
+
+/// Number of entries in the dG table (supports up to 2^24 = 16M threads)
+const DG_TABLE_ENTRIES: usize = 24;
+
+/// Compute dG table: [dG, 2*dG, 4*dG, ..., 2^23*dG]
+/// where dG = MAX_KEYS_PER_THREAD * G
+///
+/// Returns a flat array of 24 * 8 = 192 u64 values
+/// Each entry is (X[4], Y[4]) in little-endian limbs
+pub fn compute_dg_table() -> Vec<u64> {
+    let secp = Secp256k1::new();
+    let max_keys = get_max_keys_per_thread() as u64;
+
+    let mut table = Vec::with_capacity(DG_TABLE_ENTRIES * 8);
+
+    for i in 0..DG_TABLE_ENTRIES {
+        // Compute scalar = 2^i * MAX_KEYS_PER_THREAD
+        let scalar = max_keys << i;
+
+        // Convert scalar to 32-byte big-endian array
+        let mut scalar_bytes = [0u8; 32];
+        scalar_bytes[24..32].copy_from_slice(&scalar.to_be_bytes());
+
+        // Create secret key and compute public key
+        let sk = SecretKey::from_slice(&scalar_bytes).expect("valid scalar");
+        let pk = sk.public_key(&secp);
+
+        // Extract X and Y coordinates from uncompressed public key
+        let (x_limbs, y_limbs) = pubkey_to_xy_limbs(&pk);
+
+        // Add to table: X[4], Y[4]
+        table.extend_from_slice(&x_limbs);
+        table.extend_from_slice(&y_limbs);
+    }
+
+    table
+}
+
+/// Compute base_pubkey = base_key * G
+///
+/// Returns (X[4], Y[4]) in little-endian limbs
+pub fn compute_base_pubkey(base_key: &[u64; 4]) -> ([u64; 4], [u64; 4]) {
+    let secp = Secp256k1::new();
+
+    // Convert base_key (little-endian limbs) to 32-byte big-endian array
+    let mut key_bytes = [0u8; 32];
+    for (i, limb) in base_key.iter().enumerate() {
+        // limb[0] is lowest, write to end of array
+        let offset = 24 - i * 8;
+        key_bytes[offset..offset + 8].copy_from_slice(&limb.to_be_bytes());
+    }
+
+    let sk = SecretKey::from_slice(&key_bytes).expect("valid secret key");
+    let pk = sk.public_key(&secp);
+
+    pubkey_to_xy_limbs(&pk)
+}
+
+/// Extract X and Y coordinates from a PublicKey as little-endian u64 limbs
+fn pubkey_to_xy_limbs(pk: &PublicKey) -> ([u64; 4], [u64; 4]) {
+    // Uncompressed format: 04 || X (32 bytes) || Y (32 bytes)
+    let serialized = pk.serialize_uncompressed();
+
+    let mut x_limbs = [0u64; 4];
+    let mut y_limbs = [0u64; 4];
+
+    // X is at bytes 1..33 (big-endian)
+    // Convert to little-endian limbs
+    for i in 0..4 {
+        let offset = 1 + (3 - i) * 8; // Start from MSB
+        x_limbs[i] = u64::from_be_bytes(serialized[offset..offset + 8].try_into().unwrap());
+    }
+
+    // Y is at bytes 33..65 (big-endian)
+    for i in 0..4 {
+        let offset = 33 + (3 - i) * 8; // Start from MSB
+        y_limbs[i] = u64::from_be_bytes(serialized[offset..offset + 8].try_into().unwrap());
+    }
+
+    (x_limbs, y_limbs)
 }
 
 /// Initialize GPU and return context
@@ -424,7 +506,9 @@ pub struct GpuMatch {
 
 /// Data for a single stream buffer (sequential key strategy)
 struct SequentialStreamBuffer {
-    base_key_dev: cudarc::driver::CudaSlice<u64>, // Only 4 u64! (32 bytes)
+    base_key_dev: cudarc::driver::CudaSlice<u64>, // 4 u64 (32 bytes)
+    base_pubkey_x_dev: cudarc::driver::CudaSlice<u64>, // 4 u64 (32 bytes)
+    base_pubkey_y_dev: cudarc::driver::CudaSlice<u64>, // 4 u64 (32 bytes)
     matched_base_idx_dev: cudarc::driver::CudaSlice<u32>,
     matched_offset_dev: cudarc::driver::CudaSlice<u32>,
     matched_pubkeys_x_dev: cudarc::driver::CudaSlice<u64>,
@@ -447,6 +531,7 @@ pub struct SequentialTripleBufferMiner {
     kernel: CudaFunction,
     patterns_dev: cudarc::driver::CudaSlice<u64>,
     masks_dev: cudarc::driver::CudaSlice<u64>,
+    dg_table_dev: cudarc::driver::CudaSlice<u64>, // Precomputed dG table (24 * 8 = 192 u64)
     num_prefixes: usize,
     max_matches: u32,
     threads_per_block: u32,
@@ -487,12 +572,20 @@ impl SequentialTripleBufferMiner {
             stream_0.memcpy_htod(&masks, &mut masks_dev)?;
         }
 
+        // Compute and upload dG table (precomputed: dG, 2*dG, 4*dG, ..., 2^23*dG)
+        // This eliminates _PointMult(k, G) from the kernel!
+        let dg_table = compute_dg_table();
+        let mut dg_table_dev = stream_0.alloc_zeros::<u64>(DG_TABLE_ENTRIES * 8)?;
+        stream_0.memcpy_htod(&dg_table, &mut dg_table_dev)?;
+
         // Pre-allocate buffers for all 3 streams
         // Note: base_key_dev is only 4 u64 (32 bytes) instead of batch_size * 4!
         let mut bufs = Vec::with_capacity(3);
         for stream in &streams {
             let buf = SequentialStreamBuffer {
-                base_key_dev: stream.alloc_zeros::<u64>(4)?, // Only 32 bytes!
+                base_key_dev: stream.alloc_zeros::<u64>(4)?, // 32 bytes
+                base_pubkey_x_dev: stream.alloc_zeros::<u64>(4)?, // 32 bytes
+                base_pubkey_y_dev: stream.alloc_zeros::<u64>(4)?, // 32 bytes
                 matched_base_idx_dev: stream.alloc_zeros::<u32>(max_matches as usize)?,
                 matched_offset_dev: stream.alloc_zeros::<u32>(max_matches as usize)?,
                 matched_pubkeys_x_dev: stream.alloc_zeros::<u64>(max_matches as usize * 4)?,
@@ -515,6 +608,7 @@ impl SequentialTripleBufferMiner {
             kernel,
             patterns_dev,
             masks_dev,
+            dg_table_dev,
             num_prefixes,
             max_matches,
             threads_per_block,
@@ -543,8 +637,14 @@ impl SequentialTripleBufferMiner {
         // Reset match_count to 0
         stream.memcpy_htod(&[0u32], &mut buf.match_count_dev)?;
 
-        // Transfer single base key to device (only 32 bytes!)
+        // Transfer base key to device (32 bytes)
         stream.memcpy_htod(base_key.as_slice(), &mut buf.base_key_dev)?;
+
+        // Compute base_pubkey = base_key * G on CPU and transfer to device
+        // This is done once per batch (not per thread), so CPU overhead is negligible
+        let (base_pubkey_x, base_pubkey_y) = compute_base_pubkey(base_key);
+        stream.memcpy_htod(&base_pubkey_x, &mut buf.base_pubkey_x_dev)?;
+        stream.memcpy_htod(&base_pubkey_y, &mut buf.base_pubkey_y_dev)?;
 
         // Launch kernel
         let num_blocks = (buf.num_threads as u32).div_ceil(self.threads_per_block);
@@ -559,6 +659,9 @@ impl SequentialTripleBufferMiner {
 
         let mut builder = stream.launch_builder(&self.kernel);
         builder.arg(&mut buf.base_key_dev);
+        builder.arg(&mut buf.base_pubkey_x_dev);
+        builder.arg(&mut buf.base_pubkey_y_dev);
+        builder.arg(&mut self.dg_table_dev);
         builder.arg(&mut self.patterns_dev);
         builder.arg(&mut self.masks_dev);
         builder.arg(&num_prefixes_u32);
@@ -803,8 +906,11 @@ pub fn generate_pubkeys_sequential(
     let patterns: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
     let masks: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
 
-    // Allocate device memory for inputs (only 4 u64 for base_key!)
+    // Allocate device memory for inputs
     let mut base_key_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut base_pubkey_x_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut base_pubkey_y_dev = stream.alloc_zeros::<u64>(4)?;
+    let mut dg_table_dev = stream.alloc_zeros::<u64>(DG_TABLE_ENTRIES * 8)?;
     let mut patterns_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
     let mut masks_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
 
@@ -816,8 +922,15 @@ pub fn generate_pubkeys_sequential(
     let mut matched_endo_type_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
     let mut match_count_dev = stream.alloc_zeros::<u32>(1)?;
 
+    // Compute dG table and base_pubkey
+    let dg_table = compute_dg_table();
+    let (base_pubkey_x, base_pubkey_y) = compute_base_pubkey(base_key);
+
     // Copy inputs to device
     stream.memcpy_htod(base_key.as_slice(), &mut base_key_dev)?;
+    stream.memcpy_htod(&base_pubkey_x, &mut base_pubkey_x_dev)?;
+    stream.memcpy_htod(&base_pubkey_y, &mut base_pubkey_y_dev)?;
+    stream.memcpy_htod(&dg_table, &mut dg_table_dev)?;
     stream.memcpy_htod(&patterns, &mut patterns_dev)?;
     stream.memcpy_htod(&masks, &mut masks_dev)?;
 
@@ -835,6 +948,9 @@ pub fn generate_pubkeys_sequential(
     let num_prefixes_u32 = num_prefixes as u32;
     let mut builder = stream.launch_builder(&kernel);
     builder.arg(&mut base_key_dev);
+    builder.arg(&mut base_pubkey_x_dev);
+    builder.arg(&mut base_pubkey_y_dev);
+    builder.arg(&mut dg_table_dev);
     builder.arg(&mut patterns_dev);
     builder.arg(&mut masks_dev);
     builder.arg(&num_prefixes_u32);
