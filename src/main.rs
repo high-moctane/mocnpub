@@ -371,23 +371,20 @@ fn mining_loop(
             );
         }
 
-        // 3. Launch next batch for this stream (it's now free after collect)
-        // Use the data that was generated 2 rotations ago (ready to use)
-        let ready_data_idx = (collect_idx + 2) % 3;
-        if let Err(e) = miner.launch_single(collect_idx, &host_u64[ready_data_idx]) {
-            eprintln!("❌ GPU kernel launch error: {}", e);
-            std::process::exit(1);
-        }
-
-        // 5. Generate new RNG data into the buffer we just processed
-        // This buffer is now safe to overwrite (results already extracted)
-        // It will be used 2 rotations later
+        // 3. Generate new RNG data for this buffer (it's now safe to overwrite)
+        // While RNG runs, streams (collect_idx+1) and (collect_idx+2) are still in GPU
         for i in 0..batch_size {
             rng.fill_bytes(&mut host_bytes[collect_idx][i]);
             host_u64[collect_idx][i] = bytes_to_u64x4(&host_bytes[collect_idx][i]);
         }
 
-        // 6. Rotate to next buffer
+        // 4. Launch with fresh RNG data (each stream uses its own buffer)
+        if let Err(e) = miner.launch_single(collect_idx, &host_u64[collect_idx]) {
+            eprintln!("❌ GPU kernel launch error: {}", e);
+            std::process::exit(1);
+        }
+
+        // 5. Rotate to next buffer
         collect_idx = (collect_idx + 1) % 3;
     }
 }

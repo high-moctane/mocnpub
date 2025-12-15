@@ -840,6 +840,9 @@ impl TripleBufferMiner {
         let stream = &self.streams[idx];
         let buf = &mut self.bufs[idx];
 
+        // Reset match_count to 0 before launching (prevents accumulation from previous batches)
+        stream.memcpy_htod(&[0u32], &mut buf.match_count_dev)?;
+
         // Transfer base keys to device (async)
         let base_keys_flat: Vec<u64> = base_keys.iter().flat_map(|k| k.iter().copied()).collect();
         stream.memcpy_htod(&base_keys_flat, &mut buf.base_keys_dev)?;
