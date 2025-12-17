@@ -5,7 +5,10 @@
  */
 
 use cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT;
-use cudarc::driver::{CudaContext, CudaFunction, CudaModule, LaunchConfig, PushKernelArg};
+use cudarc::driver::sys::{
+    CUctx_flags_enum::CU_CTX_SCHED_BLOCKING_SYNC, cuDevicePrimaryCtxSetFlags_v2,
+};
+use cudarc::driver::{CudaContext, CudaFunction, CudaModule, LaunchConfig, PushKernelArg, result};
 use cudarc::nvrtc::Ptx;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use std::sync::Arc;
@@ -100,7 +103,21 @@ fn pubkey_to_xy_limbs(pk: &PublicKey) -> ([u64; 4], [u64; 4]) {
 }
 
 /// Initialize GPU and return context
+///
+/// This function enables blocking sync (CU_CTX_SCHED_BLOCKING_SYNC) to reduce
+/// CPU usage and power consumption. Instead of busy-waiting (spin lock),
+/// the CPU will yield to the OS scheduler while waiting for GPU operations.
 pub fn init_gpu() -> Result<Arc<CudaContext>, Box<dyn std::error::Error>> {
+    // Initialize CUDA driver API first
+    result::init()?;
+
+    // Enable blocking sync BEFORE creating the context
+    // This must be called before CudaContext::new() to take effect
+    let cu_device = result::device::get(0)?;
+    unsafe {
+        cuDevicePrimaryCtxSetFlags_v2(cu_device, CU_CTX_SCHED_BLOCKING_SYNC as u32).result()?;
+    }
+
     // Get GPU context (already returns Arc<CudaContext>)
     let ctx = CudaContext::new(0)?;
     Ok(ctx)
