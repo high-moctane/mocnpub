@@ -56,7 +56,7 @@ enum Commands {
 
         /// Number of parallel miners (each with 3 streams = triple buffering)
         /// More miners may improve GPU utilization, like make -j
-        #[arg(long, default_value = "1")]
+        #[arg(long, default_value = "2")]
         miners: usize,
     },
 

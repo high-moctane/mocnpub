@@ -375,8 +375,8 @@ cmd.arg(format!("-D MAX_KEYS_PER_THREAD={}", max_keys));
 |--------|------|
 | 2^i × G プリコンピュート | `_PointMult` が全体の 0.4% → 効果 0.2% |
 | PTX carry/borrow | NVCC が最適化済み、<10% の改善 |
-| CUDA Streams | 転送が 0.1ms（全体の 0.25%）→ 効果 1-2%（※再検討中、下記参照）|
-| Pinned Memory | 転送がボトルネックではない（※再検討中、下記参照）|
+| CUDA Streams | Triple Buffering で実装済み（+5.7%）|
+| Pinned Memory | 連続秘密鍵戦略で転送が 100 bytes/バッチに削減 → 効果 0.01% 以下 |
 | **レジスタ削減** | スピル 96% 発生で逆効果（1.14B → 1.03B）|
 | **CPU 公開鍵プリコンピュート** | CPU がボトルネック、Occupancy 改善なし（3.09B → 844M）|
 | **SoA 最適化** | キャッシュミス多発、VRAM 消費大、batch_size を上げられない（3.09B → 2.70B）|

@@ -299,7 +299,8 @@ SoA（Structure of Arrays）最適化を実装：
 |--------|------|
 | 2^i × G プリコンピュート | 効果 0.2%（`_PointMult` が全体の 0.4%）|
 | PTX carry/borrow | NVCC が最適化済み |
-| CUDA Streams | 転送がボトルネックではない |
+| CUDA Streams | Triple Buffering で実装済み（+5.7%）|
+| Pinned Memory | 連続秘密鍵戦略で転送が 100 bytes/バッチに削減 → 効果 0.01% 以下 |
 | **レジスタ削減** | スピル 96% 発生で逆効果（1.14B → 1.03B）|
 | **CPU 公開鍵プリコンピュート** | CPU がボトルネック、Occupancy 改善なし（3.09B → 844M）|
 | **`_PointMult` ブランチレス化** | アルゴリズム的に必要な分岐（ダブル＆アッド法のビット分岐）、計算量 2 倍になるため見送り |
