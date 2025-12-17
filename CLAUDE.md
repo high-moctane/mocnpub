@@ -383,7 +383,6 @@ cmd.arg(format!("-D MAX_KEYS_PER_THREAD={}", max_keys));
 | **`_PointMult` ブランチレス化** | アルゴリズム的に必要な分岐（ダブル＆アッド法のビット分岐 96.26%）、計算量 2 倍になるため見送り |
 | **`_Reduce512` ブランチレス化** | ダイバージェンス 99.16% を解消したが、実測で旧実装のほうが高速（3.20B vs 3.19B）→ 分岐予測が効いていた可能性 |
 | **`_PointAdd` 重複計算最適化** | `_PointMult` 内でのみ使用（全体の約 8%）、レジスタ 128/128 でスピルリスク高、効果 0.1% 未満 |
-| **Blocking Sync（CPU 使用率削減）** | `cuDevicePrimaryCtxSetFlags_v2` を `retain` 前に呼ぶ必要があり、cudarc の `CudaContext::new()` では実現不可。低レベル API を直接呼ぶ必要がある（今後の課題）|
 
 #### レジスタ削減の実験（2025-11-29）
 

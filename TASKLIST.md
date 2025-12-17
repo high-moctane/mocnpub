@@ -1,8 +1,8 @@
 # mocnpub タスクリスト 📋
 
 **作成日**: 2025-11-14
-**最終更新**: 2025-12-15
-**進捗**: Step 0〜7 完了！🎉 Sequential Key Strategy で **3.67B keys/sec** 達成（VRAM 99.99%削減）！🔥
+**最終更新**: 2025-12-18
+**進捗**: Step 0〜9 完了！🎉 Blocking Sync で **CPU 使用率 100% → 1%** 削減（電力消費大幅削減）！🔥
 
 ---
 
@@ -20,6 +20,7 @@
 | Step 6 | コードクリーンアップ（CPU モード削除）| ✅ 完了 |
 | Step 7 | Triple Buffering + Sequential Key Strategy（3.67B、VRAM 99.99%削減）| ✅ 完了 🔥 |
 | Step 8 | dG テーブルプリコンピュート（_PointMult 削減、+12.7%）| ✅ 完了 🔥🔥🔥 |
+| Step 9 | Blocking Sync（CPU 使用率 100% → 1%、電力消費削減）| ✅ 完了 🔥🔥🔥 |
 
 ---
 
@@ -48,8 +49,10 @@
 | GPU + Triple Buffering（3 streams） | 3.70B keys/sec | 52,857x |
 | GPU + Sequential Key Strategy（VRAM 99.99%削減、1600 keys/thread） | 3.67B keys/sec | 52,429x |
 | **GPU + dG テーブルプリコンピュート（_PointMult 削減）** | **4.135B keys/sec** | **59,071x** 🔥🔥🔥 |
+| **GPU + Blocking Sync（CPU 使用率 1%）** | **4.136B keys/sec** | **59,086x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4.5 分で見つかる！** 🎉
+**CPU 使用率が 100% → 1% に削減！電力消費大幅削減！** 💡
 
 ---
 
@@ -443,6 +446,48 @@ CPU（Ryzen 9800X3D、8コア16スレッド）で連続秘密鍵戦法を実装�
 - CPU 比 **59,071 倍**
 
 `_PointMult`（256回のダブル＆アッド）を `_PointMultByIndex`（最大24回のPointAdd）に置き換えたことで、初期公開鍵計算のコストを大幅に削減。
+
+---
+
+## ✅ Step 9: Blocking Sync（2025-12-18 完了）🔥
+
+### 背景
+
+- `synchronize()` がスピンウェイト（busy wait）で CPU を 100% 使っていた
+- 電力消費削減のために blocking sync に変更したい
+- CUDA では `cuDevicePrimaryCtxSetFlags_v2` で `CU_CTX_SCHED_BLOCKING_SYNC` を設定
+
+### 実装内容
+
+**わずか 18 行の追加で実現！**
+
+```rust
+// import 追加
+use cudarc::driver::sys::{
+    cuDevicePrimaryCtxSetFlags_v2, CUctx_flags_enum::CU_CTX_SCHED_BLOCKING_SYNC,
+};
+
+// init_gpu() に追加
+result::init()?;
+let cu_device = result::device::get(0)?;
+unsafe {
+    cuDevicePrimaryCtxSetFlags_v2(cu_device, CU_CTX_SCHED_BLOCKING_SYNC as u32).result()?;
+}
+```
+
+### 結果 🎉
+
+| 指標 | Before | After |
+|------|--------|-------|
+| **CPU 使用率** | ~100% | **~1%** 🔥🔥🔥 |
+| **スループット** | 4.135B | **4.136B** ✅ |
+| **電力消費** | 高い | **大幅削減** 💡 |
+
+### 学び 💡
+
+- cudarc 0.18.2 では `cuDevicePrimaryCtxSetFlags_v2` が sys レイヤーで公開されている
+- Safe API ラッパー（`primary_ctx::set_flags()`）は存在しない
+- `CudaContext::new()` の **前** に `result::init()` と flags 設定が必要
 
 ---
 
