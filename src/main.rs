@@ -3,6 +3,9 @@ use secp256k1::rand::{self, RngCore};
 use secp256k1::{Secp256k1, SecretKey};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::time::Instant;
 
 // Import common functions from lib.rs
@@ -50,6 +53,11 @@ enum Commands {
         /// GPU threads per block (default: 128, optimal for RTX 5070 Ti)
         #[arg(long, default_value = "128")]
         threads_per_block: u32,
+
+        /// Number of parallel miners (each with 3 streams = triple buffering)
+        /// More miners may improve GPU utilization, like make -j
+        #[arg(long, default_value = "1")]
+        miners: usize,
     },
 
     /// Verify GPU calculations against CPU (fuzzing-like testing)
@@ -70,7 +78,8 @@ fn main() -> io::Result<()> {
             limit,
             batch_size,
             threads_per_block,
-        } => run_mine(prefix, output, limit, batch_size, threads_per_block),
+            miners,
+        } => run_mine(prefix, output, limit, batch_size, threads_per_block, miners),
         Commands::Verify { iterations } => run_verify(iterations),
     }
 }
@@ -82,6 +91,7 @@ fn run_mine(
     limit: usize,
     batch_size: usize,
     threads_per_block: u32,
+    miners: usize,
 ) -> io::Result<()> {
     // Split prefix by comma and convert to Vec
     let prefixes: Vec<String> = prefix.split(',').map(|s| s.trim().to_string()).collect();
@@ -107,6 +117,7 @@ fn run_mine(
         "Threads/block: {}, Keys/thread: {} (build-time)",
         threads_per_block, keys_per_thread
     );
+    println!("Parallel miners: {} (× 3 streams each)", miners);
     println!(
         "Limit: {}\n",
         if limit == 0 {
@@ -123,10 +134,17 @@ fn run_mine(
         threads_per_block,
         keys_per_thread,
         output.as_deref(),
+        miners,
     )
 }
 
-/// Main mining loop (GPU-side prefix matching)
+/// Match result with miner ID for multi-miner setup
+struct MinerMatch {
+    miner_id: usize,
+    gpu_match: mocnpub_main::gpu::GpuMatch,
+}
+
+/// Main mining loop (GPU-side prefix matching with parallel miners)
 fn mining_loop(
     prefixes: &[String],
     limit: usize,
@@ -134,6 +152,7 @@ fn mining_loop(
     threads_per_block: u32,
     keys_per_thread: u32,
     output_path: Option<&str>,
+    num_miners: usize,
 ) -> io::Result<()> {
     // Initialize GPU
     let ctx = match init_gpu() {
@@ -184,9 +203,14 @@ fn mining_loop(
     );
 
     let start = Instant::now();
-    let mut total_count: u64 = 0;
-    let mut found_count: usize = 0;
-    let mut rng = rand::thread_rng();
+
+    // Shared state for parallel miners
+    let total_count = Arc::new(AtomicU64::new(0));
+    let found_count = Arc::new(AtomicUsize::new(0));
+    let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // Channel for results from miners
+    let (tx, rx) = mpsc::channel::<MinerMatch>();
 
     // Prepare file output (append mode)
     let mut output_file = if let Some(path) = output_path {
@@ -197,185 +221,239 @@ fn mining_loop(
 
     // Parameter settings
     let max_matches: u32 = 1000; // generous buffer
+    let batch_keys = (batch_size as u64) * (keys_per_thread as u64) * 3;
 
-    // Create SequentialTripleBufferMiner (PTX, streams, buffers are initialized once)
-    // Uses sequential key strategy: only 32 bytes per buffer instead of batch_size * 32!
-    let mut miner = match SequentialTripleBufferMiner::new(
-        &ctx,
-        &prefix_bits,
-        max_matches,
-        threads_per_block,
-        batch_size,
-    ) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("❌ Failed to create SequentialTripleBufferMiner: {}", e);
-            std::process::exit(1);
-        }
-    };
-    println!("✅ SequentialTripleBufferMiner initialized (VRAM-efficient: 32 bytes per buffer!)");
+    // Create and launch parallel miners
+    let mut handles = Vec::new();
 
-    // Secret key buffers (base keys) - 3 single keys for triple buffering
-    // Sequential strategy: each buffer only needs ONE base key (32 bytes)!
-    let mut host_bytes: [[u8; 32]; 3] = [[0u8; 32]; 3];
-    let mut host_u64: [[u64; 4]; 3] = [[0u64; 4]; 3];
+    for miner_id in 0..num_miners {
+        let ctx = ctx.clone();
+        let prefix_bits = prefix_bits.clone();
+        let tx = tx.clone();
+        let total_count = total_count.clone();
+        let stop_flag = stop_flag.clone();
 
-    // Generate and launch ALL 3 initial batches
-    for buf_idx in 0..3 {
-        rng.fill_bytes(&mut host_bytes[buf_idx]);
-        host_u64[buf_idx] = bytes_to_u64x4(&host_bytes[buf_idx]);
-        if let Err(e) = miner.launch_single(buf_idx, &host_u64[buf_idx]) {
-            eprintln!("❌ GPU kernel launch error: {}", e);
-            std::process::exit(1);
-        }
-    }
-    println!("🎯 Triple buffering enabled (sequential key strategy, 2 kernels in GPU queue)");
-
-    // Rotation index: which buffer to collect next
-    // Pattern: collect(N) → launch(N) → RNG(N) → rotate
-    let mut collect_idx = 0usize;
-
-    // Main loop (triple buffer rotation)
-    loop {
-        // 1. Collect results from buffer[collect_idx] (blocking)
-        // Note: While collecting, buffer[(collect_idx+1)%3] is still processing in GPU!
-        let matches = match miner.collect_single(collect_idx) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("❌ GPU kernel error: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-        // Update attempt count (endomorphism checks 3 X-coordinates per key)
-        total_count += (batch_size as u64) * (keys_per_thread as u64) * 3;
-
-        // 2. Process matched results
-        // Sequential strategy: m.base_key is already the actual secret key (computed in GPU)
-        for m in matches {
-            found_count += 1;
-
-            // Adjust for endomorphism: actual_key * λ^endo_type mod n
-            // endo_type: 0 = original, 1 = λ*k, 2 = λ²*k
-            // Note: m.base_key is already base_key + global_offset + key_offset (computed in GPU)
-            let actual_key_u64 = adjust_privkey_for_endomorphism(&m.base_key, m.endo_type);
-            let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
-
-            // Generate nsec from secret key
-            let sk = SecretKey::from_slice(&actual_key_bytes).expect("Invalid secret key");
-            let nsec = seckey_to_nsec(&sk);
-
-            // Get public key (recomputed from secret key - this is the correct value)
-            let secp = Secp256k1::new();
-            let pk = sk.public_key(&secp);
-            let pk_hex = pk.to_string();
-            let pk_x_only = &pk_hex[2..];
-
-            // Compute npub (using public key recomputed from secret key)
-            let npub = pubkey_to_npub(&pk);
-            let npub_body = &npub[5..];
-
-            // Verify consistency with pubkey_x returned from GPU
-            let gpu_npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
-            if npub != gpu_npub {
-                eprintln!(
-                    "⚠️  Warning: GPU pubkey_x mismatch! endo_type={}",
-                    m.endo_type
-                );
-                eprintln!("    GPU npub:    {}", gpu_npub);
-                eprintln!("    Actual npub: {}", npub);
-            }
-
-            // Identify matched prefix (verified against actual npub)
-            let matched_prefix = prefixes
-                .iter()
-                .find(|p| npub_body.starts_with(p.as_str()))
-                .map(|p| p.as_str())
-                .unwrap_or("?");
-
-            let elapsed = start.elapsed();
-            let elapsed_secs = elapsed.as_secs_f64();
-            let keys_per_sec = total_count as f64 / elapsed_secs;
-
-            // Format result
-            let output_text = format!(
-                "✅ Found #{}! ({} attempts, GPU prefix match)\n\
-                 Matched prefix: '{}'\n\n\
-                 Elapsed: {:.2} sec\n\
-                 Performance: {:.2} keys/sec\n\n\
-                 Secret key (hex): {}\n\
-                 Secret key (nsec): {}\n\
-                 Public key (compressed): {}\n\
-                 Public key (x-coord): {}\n\
-                 Public key (npub): {}\n\
-{}\n",
-                found_count,
-                total_count,
-                matched_prefix,
-                elapsed_secs,
-                keys_per_sec,
-                sk.display_secret(),
-                nsec,
-                pk,
-                pk_x_only,
-                npub,
-                "=".repeat(80)
-            );
-
-            // Output
-            if let Some(ref mut file) = output_file {
-                file.write_all(output_text.as_bytes())?;
-                file.flush()?;
-            }
-            print!("{}", output_text);
-            io::stdout().flush()?;
-
-            // Exit if limit reached
-            if limit > 0 && found_count >= limit {
-                let final_elapsed = start.elapsed();
-                let final_elapsed_secs = final_elapsed.as_secs_f64();
-                println!("\n🎉 GPU mining complete!");
-                println!("Keys found: {}", found_count);
-                println!("Total attempts: {}", total_count);
-                println!("Elapsed: {:.2} sec", final_elapsed_secs);
-                println!(
-                    "Performance: {:.2} keys/sec",
-                    total_count as f64 / final_elapsed_secs
-                );
-                if let Some(path) = output_path {
-                    println!("Results saved to: {}", path);
+        let handle = std::thread::spawn(move || {
+            // Create miner in this thread
+            let mut miner = match SequentialTripleBufferMiner::new(
+                &ctx,
+                &prefix_bits,
+                max_matches,
+                threads_per_block,
+                batch_size,
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ Miner {} failed to initialize: {}", miner_id, e);
+                    return;
                 }
-                return Ok(());
+            };
+
+            let mut rng = rand::thread_rng();
+            let mut host_bytes: [[u8; 32]; 3] = [[0u8; 32]; 3];
+            let mut host_u64: [[u64; 4]; 3] = [[0u64; 4]; 3];
+
+            // Launch initial batches
+            for buf_idx in 0..3 {
+                rng.fill_bytes(&mut host_bytes[buf_idx]);
+                host_u64[buf_idx] = bytes_to_u64x4(&host_bytes[buf_idx]);
+                if let Err(e) = miner.launch_single(buf_idx, &host_u64[buf_idx]) {
+                    eprintln!("❌ Miner {} launch error: {}", miner_id, e);
+                    return;
+                }
+            }
+
+            let mut collect_idx = 0usize;
+
+            // Mining loop
+            while !stop_flag.load(Ordering::Relaxed) {
+                // Collect results
+                let matches = match miner.collect_single(collect_idx) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("❌ Miner {} collect error: {}", miner_id, e);
+                        break;
+                    }
+                };
+
+                // Update total count
+                total_count.fetch_add(batch_keys, Ordering::Relaxed);
+
+                // Send matches to main thread
+                for m in matches {
+                    if tx
+                        .send(MinerMatch {
+                            miner_id,
+                            gpu_match: m,
+                        })
+                        .is_err()
+                    {
+                        // Receiver dropped, stop
+                        return;
+                    }
+                }
+
+                // Generate new key and launch
+                rng.fill_bytes(&mut host_bytes[collect_idx]);
+                host_u64[collect_idx] = bytes_to_u64x4(&host_bytes[collect_idx]);
+                if let Err(e) = miner.launch_single(collect_idx, &host_u64[collect_idx]) {
+                    eprintln!("❌ Miner {} launch error: {}", miner_id, e);
+                    break;
+                }
+
+                collect_idx = (collect_idx + 1) % 3;
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Drop our copy of tx so rx.iter() will end when all miners stop
+    drop(tx);
+
+    println!(
+        "✅ {} parallel miner(s) initialized ({}×3 = {} streams total)",
+        num_miners,
+        num_miners,
+        num_miners * 3
+    );
+    println!("🎯 Mining started with parallel triple buffering");
+
+    // Progress tracking
+    let mut last_progress_count: u64 = 0;
+
+    // Main thread: process results
+    loop {
+        // Check for matches with timeout
+        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(miner_match) => {
+                let m = miner_match.gpu_match;
+                let current_found = found_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+                // Adjust for endomorphism
+                let actual_key_u64 = adjust_privkey_for_endomorphism(&m.base_key, m.endo_type);
+                let actual_key_bytes = u64x4_to_bytes(&actual_key_u64);
+
+                let sk = SecretKey::from_slice(&actual_key_bytes).expect("Invalid secret key");
+                let nsec = seckey_to_nsec(&sk);
+
+                let secp = Secp256k1::new();
+                let pk = sk.public_key(&secp);
+                let pk_hex = pk.to_string();
+                let pk_x_only = &pk_hex[2..];
+
+                let npub = pubkey_to_npub(&pk);
+                let npub_body = &npub[5..];
+
+                // Verify GPU result
+                let gpu_npub = pubkey_bytes_to_npub(&u64x4_to_bytes(&m.pubkey_x));
+                if npub != gpu_npub {
+                    eprintln!(
+                        "⚠️  Warning: GPU pubkey_x mismatch! miner={}, endo_type={}",
+                        miner_match.miner_id, m.endo_type
+                    );
+                    eprintln!("    GPU npub:    {}", gpu_npub);
+                    eprintln!("    Actual npub: {}", npub);
+                }
+
+                let matched_prefix = prefixes
+                    .iter()
+                    .find(|p| npub_body.starts_with(p.as_str()))
+                    .map(|p| p.as_str())
+                    .unwrap_or("?");
+
+                let current_total = total_count.load(Ordering::Relaxed);
+                let elapsed = start.elapsed();
+                let elapsed_secs = elapsed.as_secs_f64();
+                let keys_per_sec = current_total as f64 / elapsed_secs;
+
+                let output_text = format!(
+                    "✅ Found #{}! ({} attempts, miner #{})\n\
+                     Matched prefix: '{}'\n\n\
+                     Elapsed: {:.2} sec\n\
+                     Performance: {:.2} keys/sec\n\n\
+                     Secret key (hex): {}\n\
+                     Secret key (nsec): {}\n\
+                     Public key (compressed): {}\n\
+                     Public key (x-coord): {}\n\
+                     Public key (npub): {}\n\
+{}\n",
+                    current_found,
+                    current_total,
+                    miner_match.miner_id,
+                    matched_prefix,
+                    elapsed_secs,
+                    keys_per_sec,
+                    sk.display_secret(),
+                    nsec,
+                    pk,
+                    pk_x_only,
+                    npub,
+                    "=".repeat(80)
+                );
+
+                if let Some(ref mut file) = output_file {
+                    file.write_all(output_text.as_bytes())?;
+                    file.flush()?;
+                }
+                print!("{}", output_text);
+                io::stdout().flush()?;
+
+                // Check limit
+                if limit > 0 && current_found >= limit {
+                    stop_flag.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // No match, check progress
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // All miners stopped
+                break;
             }
         }
 
-        // Progress display (every 10 batches)
-        let batch_keys = (batch_size as u64) * (keys_per_thread as u64);
-        if total_count.is_multiple_of(batch_keys * 10) {
+        // Progress display
+        let current_total = total_count.load(Ordering::Relaxed);
+        if current_total >= last_progress_count + batch_keys * 10 * num_miners as u64 {
+            last_progress_count = current_total;
             let elapsed_secs = start.elapsed().as_secs_f64();
-            let keys_per_sec = total_count as f64 / elapsed_secs;
+            let keys_per_sec = current_total as f64 / elapsed_secs;
             let mins = (elapsed_secs / 60.0) as u64;
             let secs = (elapsed_secs % 60.0) as u64;
+            let current_found = found_count.load(Ordering::Relaxed);
             println!(
-                "{} attempts... ({}:{:02}, {:.2} keys/sec, found: {})",
-                total_count, mins, secs, keys_per_sec, found_count
+                "{} attempts... ({}:{:02}, {:.2} keys/sec, found: {}, {} miners)",
+                current_total, mins, secs, keys_per_sec, current_found, num_miners
             );
         }
-
-        // 3. Generate new RNG data for this buffer (only ONE key needed!)
-        // While RNG runs, streams (collect_idx+1) and (collect_idx+2) are still in GPU
-        rng.fill_bytes(&mut host_bytes[collect_idx]);
-        host_u64[collect_idx] = bytes_to_u64x4(&host_bytes[collect_idx]);
-
-        // 4. Launch with fresh RNG data (each stream uses its own single key)
-        if let Err(e) = miner.launch_single(collect_idx, &host_u64[collect_idx]) {
-            eprintln!("❌ GPU kernel launch error: {}", e);
-            std::process::exit(1);
-        }
-
-        // 5. Rotate to next buffer
-        collect_idx = (collect_idx + 1) % 3;
     }
+
+    // Wait for all miner threads
+    for handle in handles {
+        let _ = handle.join();
+    }
+
+    // Final summary
+    let final_elapsed = start.elapsed();
+    let final_elapsed_secs = final_elapsed.as_secs_f64();
+    let final_total = total_count.load(Ordering::Relaxed);
+    let final_found = found_count.load(Ordering::Relaxed);
+
+    println!("\n🎉 GPU mining complete!");
+    println!("Keys found: {}", final_found);
+    println!("Total attempts: {}", final_total);
+    println!("Elapsed: {:.2} sec", final_elapsed_secs);
+    println!(
+        "Performance: {:.2} keys/sec",
+        final_total as f64 / final_elapsed_secs
+    );
+    if let Some(path) = output_path {
+        println!("Results saved to: {}", path);
+    }
+
+    Ok(())
 }
 
 /// Run the verify subcommand (GPU vs CPU verification using production kernel)
