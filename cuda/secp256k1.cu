@@ -1422,10 +1422,31 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
             if (num_prefixes == 1) {
                 matched = ((x_upper32 & s_masks[0]) == s_patterns[0]);
             } else {
-                for (uint32_t p = 0; p < num_prefixes; p++) {
-                    if ((x_upper32 & s_masks[p]) == s_patterns[p]) {
+                // 32bit × 2 concatenation: check 2 prefixes with 1 64-bit operation
+                // This halves the loop iterations for multiple prefixes
+                uint64_t x_doubled = ((uint64_t)x_upper32 << 32) | x_upper32;
+
+                uint32_t pair_count = num_prefixes / 2;
+                for (uint32_t p = 0; p < pair_count; p++) {
+                    uint32_t idx = p * 2;
+                    // Concatenate two 32-bit patterns/masks into 64-bit
+                    uint64_t combined_pattern = ((uint64_t)s_patterns[idx + 1] << 32) | s_patterns[idx];
+                    uint64_t combined_mask = ((uint64_t)s_masks[idx + 1] << 32) | s_masks[idx];
+
+                    // XOR and mask: if lower 32 bits are 0, patterns[idx] matches
+                    //               if upper 32 bits are 0, patterns[idx+1] matches
+                    uint64_t diff = (x_doubled ^ combined_pattern) & combined_mask;
+                    if ((diff & 0xFFFFFFFFULL) == 0 || (diff >> 32) == 0) {
                         matched = true;
                         break;
+                    }
+                }
+
+                // Handle odd number of prefixes: check the last one separately
+                if (!matched && (num_prefixes & 1)) {
+                    uint32_t p = num_prefixes - 1;
+                    if ((x_upper32 & s_masks[p]) == s_patterns[p]) {
+                        matched = true;
                     }
                 }
             }
