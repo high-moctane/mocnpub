@@ -1295,6 +1295,7 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     // dG_table is now in constant memory (_dG_table)
     const uint32_t* patterns,       // 32-bit patterns (upper 32 bits of pubkey X)
     const uint32_t* masks,          // 32-bit masks
+    const uint32_t* bitmap,         // 1024-bit bloom filter for fast pre-filtering
     uint32_t num_prefixes,
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
@@ -1306,14 +1307,20 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     uint32_t max_matches
 )
 {
-    // === Load patterns and masks into shared memory for fast access ===
+    // === Load patterns, masks, and bitmap into shared memory for fast access ===
     // Using 32-bit for faster comparison (CPU will re-verify with 64-bit)
     __shared__ uint32_t s_patterns[64];
     __shared__ uint32_t s_masks[64];
+    __shared__ uint32_t s_bitmap[32];  // 1024-bit bloom filter
 
+    // Load patterns and masks
     if (threadIdx.x < num_prefixes && threadIdx.x < 64) {
         s_patterns[threadIdx.x] = patterns[threadIdx.x];
         s_masks[threadIdx.x] = masks[threadIdx.x];
+    }
+    // Load bitmap (32 threads load 32 elements)
+    if (threadIdx.x < 32) {
+        s_bitmap[threadIdx.x] = bitmap[threadIdx.x];
     }
     __syncthreads();
 
@@ -1416,6 +1423,14 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
         for (uint32_t endo = 0; endo < 3; endo++) {
             // Extract upper 32 bits of x coordinate for fast matching
             uint32_t x_upper32 = (uint32_t)(x_coords[endo][3] >> 32);
+
+            // Bloom filter pre-check: skip if bitmap doesn't have this hash
+            // This filters out ~97% of non-matches with a single memory access
+            uint32_t bitmap_idx = x_upper32 >> 27;           // Upper 5 bits -> array index
+            uint32_t bitmap_bit = (x_upper32 >> 22) & 0x1F;  // Next 5 bits -> bit position
+            if (!(s_bitmap[bitmap_idx] & (1 << bitmap_bit))) {
+                continue;  // No prefix could match this x coordinate
+            }
 
             // Optimized path for single prefix (most common case)
             bool matched = false;
