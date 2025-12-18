@@ -546,8 +546,11 @@ pub struct SequentialTripleBufferMiner {
     streams: Vec<std::sync::Arc<cudarc::driver::CudaStream>>,
     _module: std::sync::Arc<CudaModule>,
     kernel: CudaFunction,
-    patterns_dev: cudarc::driver::CudaSlice<u64>,
-    masks_dev: cudarc::driver::CudaSlice<u64>,
+    patterns_dev: cudarc::driver::CudaSlice<u32>, // 32-bit for GPU (fast matching)
+    masks_dev: cudarc::driver::CudaSlice<u32>,    // 32-bit for GPU
+    // Original 64-bit patterns/masks for CPU re-verification
+    patterns_64: Vec<u64>,
+    masks_64: Vec<u64>,
     // dG table is now in constant memory (_dG_table in CUDA)
     // We keep the slice here to prevent it from being dropped (which would call cuMemFree)
     _dg_table_const: cudarc::driver::CudaSlice<u8>,
@@ -584,14 +587,19 @@ impl SequentialTripleBufferMiner {
         let kernel = module.load_function("generate_pubkeys_sequential")?;
 
         // Prepare prefix patterns and masks
-        let patterns: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
-        let masks: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
+        // Keep 64-bit versions for CPU re-verification
+        let patterns_64: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
+        let masks_64: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
 
-        let mut patterns_dev = stream_0.alloc_zeros::<u64>(num_prefixes.max(1))?;
-        let mut masks_dev = stream_0.alloc_zeros::<u64>(num_prefixes.max(1))?;
+        // Convert to 32-bit for GPU (extract upper 32 bits)
+        let patterns_32: Vec<u32> = patterns_64.iter().map(|p| (*p >> 32) as u32).collect();
+        let masks_32: Vec<u32> = masks_64.iter().map(|m| (*m >> 32) as u32).collect();
+
+        let mut patterns_dev = stream_0.alloc_zeros::<u32>(num_prefixes.max(1))?;
+        let mut masks_dev = stream_0.alloc_zeros::<u32>(num_prefixes.max(1))?;
         if num_prefixes > 0 {
-            stream_0.memcpy_htod(&patterns, &mut patterns_dev)?;
-            stream_0.memcpy_htod(&masks, &mut masks_dev)?;
+            stream_0.memcpy_htod(&patterns_32, &mut patterns_dev)?;
+            stream_0.memcpy_htod(&masks_32, &mut masks_dev)?;
         }
 
         // Compute and upload dG table to constant memory
@@ -636,6 +644,8 @@ impl SequentialTripleBufferMiner {
             kernel,
             patterns_dev,
             masks_dev,
+            patterns_64,
+            masks_64,
             _dg_table_const: dg_table_const,
             num_prefixes,
             max_matches,
@@ -742,13 +752,24 @@ impl SequentialTripleBufferMiner {
             let mut secret_key = [0u64; 4];
             secret_key.copy_from_slice(&matched_secret_keys_flat[i * 4..(i + 1) * 4]);
 
-            results.push(GpuMatch {
-                base_idx: matched_base_idx[i],
-                offset: matched_offset[i],
-                pubkey_x,
-                base_key: secret_key, // This is the actual secret key
-                endo_type: matched_endo_type[i],
-            });
+            // CPU re-verification with 64-bit patterns (GPU uses 32-bit for speed)
+            // This filters out false positives from 32-bit matching
+            let x_upper = pubkey_x[3]; // Most significant 64 bits
+            let is_real_match = self
+                .patterns_64
+                .iter()
+                .zip(self.masks_64.iter())
+                .any(|(pattern, mask)| (x_upper & mask) == (pattern & mask));
+
+            if is_real_match {
+                results.push(GpuMatch {
+                    base_idx: matched_base_idx[i],
+                    offset: matched_offset[i],
+                    pubkey_x,
+                    base_key: secret_key, // This is the actual secret key
+                    endo_type: matched_endo_type[i],
+                });
+            }
         }
 
         Ok(results)
@@ -931,16 +952,21 @@ pub fn generate_pubkeys_sequential(
     let kernel = module.load_function("generate_pubkeys_sequential")?;
 
     // Prepare prefix patterns and masks
-    let patterns: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
-    let masks: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
+    // Keep 64-bit versions for CPU re-verification
+    let patterns_64: Vec<u64> = prefix_bits.iter().map(|(p, _, _)| *p).collect();
+    let masks_64: Vec<u64> = prefix_bits.iter().map(|(_, m, _)| *m).collect();
+
+    // Convert to 32-bit for GPU (extract upper 32 bits)
+    let patterns_32: Vec<u32> = patterns_64.iter().map(|p| (*p >> 32) as u32).collect();
+    let masks_32: Vec<u32> = masks_64.iter().map(|m| (*m >> 32) as u32).collect();
 
     // Allocate device memory for inputs
     let mut base_key_dev = stream.alloc_zeros::<u64>(4)?;
     let mut base_pubkey_x_dev = stream.alloc_zeros::<u64>(4)?;
     let mut base_pubkey_y_dev = stream.alloc_zeros::<u64>(4)?;
     // dG table is in constant memory (_dG_table)
-    let mut patterns_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
-    let mut masks_dev = stream.alloc_zeros::<u64>(num_prefixes)?;
+    let mut patterns_dev = stream.alloc_zeros::<u32>(num_prefixes)?;
+    let mut masks_dev = stream.alloc_zeros::<u32>(num_prefixes)?;
 
     // Allocate device memory for outputs
     let mut matched_base_idx_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
@@ -963,8 +989,8 @@ pub fn generate_pubkeys_sequential(
     stream.memcpy_htod(base_key.as_slice(), &mut base_key_dev)?;
     stream.memcpy_htod(&base_pubkey_x, &mut base_pubkey_x_dev)?;
     stream.memcpy_htod(&base_pubkey_y, &mut base_pubkey_y_dev)?;
-    stream.memcpy_htod(&patterns, &mut patterns_dev)?;
-    stream.memcpy_htod(&masks, &mut masks_dev)?;
+    stream.memcpy_htod(&patterns_32, &mut patterns_dev)?;
+    stream.memcpy_htod(&masks_32, &mut masks_dev)?;
 
     // Calculate grid and block dimensions
     let num_blocks = (num_threads as u32).div_ceil(threads_per_block);
@@ -1013,7 +1039,7 @@ pub fn generate_pubkeys_sequential(
     let matched_secret_keys_flat = stream.clone_dtoh(&matched_secret_keys_dev)?;
     let matched_endo_type = stream.clone_dtoh(&matched_endo_type_dev)?;
 
-    // Build result vector
+    // Build result vector with CPU re-verification
     let mut results = Vec::with_capacity(match_count);
     for i in 0..match_count {
         let mut pubkey_x = [0u64; 4];
@@ -1021,13 +1047,23 @@ pub fn generate_pubkeys_sequential(
         let mut secret_key = [0u64; 4];
         secret_key.copy_from_slice(&matched_secret_keys_flat[i * 4..(i + 1) * 4]);
 
-        results.push(GpuMatch {
-            base_idx: matched_base_idx[i],
-            offset: matched_offset[i],
-            pubkey_x,
-            base_key: secret_key, // This is the actual secret key now
-            endo_type: matched_endo_type[i],
-        });
+        // CPU re-verification with 64-bit patterns (GPU uses 32-bit for speed)
+        // This filters out false positives from 32-bit matching
+        let x_upper = pubkey_x[3]; // Most significant 64 bits
+        let is_real_match = patterns_64
+            .iter()
+            .zip(masks_64.iter())
+            .any(|(pattern, mask)| (x_upper & mask) == (pattern & mask));
+
+        if is_real_match {
+            results.push(GpuMatch {
+                base_idx: matched_base_idx[i],
+                offset: matched_offset[i],
+                pubkey_x,
+                base_key: secret_key, // This is the actual secret key now
+                endo_type: matched_endo_type[i],
+            });
+        }
     }
 
     Ok(results)

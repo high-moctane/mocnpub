@@ -1293,8 +1293,8 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     const uint64_t* base_pubkey_x,  // base_key * G, X coordinate [4 limbs]
     const uint64_t* base_pubkey_y,  // base_key * G, Y coordinate [4 limbs]
     // dG_table is now in constant memory (_dG_table)
-    const uint64_t* patterns,
-    const uint64_t* masks,
+    const uint32_t* patterns,       // 32-bit patterns (upper 32 bits of pubkey X)
+    const uint32_t* masks,          // 32-bit masks
     uint32_t num_prefixes,
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
@@ -1307,8 +1307,9 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
 )
 {
     // === Load patterns and masks into shared memory for fast access ===
-    __shared__ uint64_t s_patterns[64];
-    __shared__ uint64_t s_masks[64];
+    // Using 32-bit for faster comparison (CPU will re-verify with 64-bit)
+    __shared__ uint32_t s_patterns[64];
+    __shared__ uint32_t s_masks[64];
 
     if (threadIdx.x < num_prefixes && threadIdx.x < 64) {
         s_patterns[threadIdx.x] = patterns[threadIdx.x];
@@ -1411,40 +1412,51 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
 
         uint64_t* x_coords[3] = { x, x_beta, x_beta2 };
 
-        // Prefix matching
+        // Prefix matching (32-bit for speed, CPU re-verifies with 64-bit)
         for (uint32_t endo = 0; endo < 3; endo++) {
-            uint64_t x_upper = x_coords[endo][3];
+            // Extract upper 32 bits of x coordinate for fast matching
+            uint32_t x_upper32 = (uint32_t)(x_coords[endo][3] >> 32);
 
-            for (uint32_t p = 0; p < num_prefixes; p++) {
-                if ((x_upper & s_masks[p]) == (s_patterns[p] & s_masks[p])) {
-                    uint32_t slot = atomicAdd(match_count, 1);
-                    if (slot < max_matches) {
-                        matched_base_idx[slot] = idx;
-                        matched_offset[slot] = i;
-                        matched_endo_type[slot] = endo;
-
-                        for (int j = 0; j < 4; j++) {
-                            matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
-                        }
-
-                        // Compute actual secret key: thread_base_key + i
-                        // (with carry propagation)
-                        uint64_t actual_key[4];
-                        uint64_t key_sum = thread_base_key[0] + (uint64_t)i;
-                        uint64_t key_carry = (key_sum < thread_base_key[0]) ? 1 : 0;
-                        actual_key[0] = key_sum;
-
-                        for (int j = 1; j < 4; j++) {
-                            key_sum = thread_base_key[j] + key_carry;
-                            key_carry = (key_sum < key_carry) ? 1 : 0;
-                            actual_key[j] = key_sum;
-                        }
-
-                        for (int j = 0; j < 4; j++) {
-                            matched_secret_keys[slot * 4 + j] = actual_key[j];
-                        }
+            // Optimized path for single prefix (most common case)
+            bool matched = false;
+            if (num_prefixes == 1) {
+                matched = ((x_upper32 & s_masks[0]) == s_patterns[0]);
+            } else {
+                for (uint32_t p = 0; p < num_prefixes; p++) {
+                    if ((x_upper32 & s_masks[p]) == s_patterns[p]) {
+                        matched = true;
+                        break;
                     }
-                    break;
+                }
+            }
+
+            if (matched) {
+                uint32_t slot = atomicAdd(match_count, 1);
+                if (slot < max_matches) {
+                    matched_base_idx[slot] = idx;
+                    matched_offset[slot] = i;
+                    matched_endo_type[slot] = endo;
+
+                    for (int j = 0; j < 4; j++) {
+                        matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
+                    }
+
+                    // Compute actual secret key: thread_base_key + i
+                    // (with carry propagation)
+                    uint64_t actual_key[4];
+                    uint64_t key_sum = thread_base_key[0] + (uint64_t)i;
+                    uint64_t key_carry = (key_sum < thread_base_key[0]) ? 1 : 0;
+                    actual_key[0] = key_sum;
+
+                    for (int j = 1; j < 4; j++) {
+                        key_sum = thread_base_key[j] + key_carry;
+                        key_carry = (key_sum < key_carry) ? 1 : 0;
+                        actual_key[j] = key_sum;
+                    }
+
+                    for (int j = 0; j < 4; j++) {
+                        matched_secret_keys[slot * 4 + j] = actual_key[j];
+                    }
                 }
             }
         }
