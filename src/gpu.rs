@@ -58,38 +58,6 @@ pub fn compute_dg_table() -> Vec<u64> {
     table
 }
 
-/// Compute a 1024-bit bloom filter bitmap for fast prefix pre-filtering
-///
-/// For each prefix, we set bits in the bitmap based on the upper 10 bits.
-/// If the mask doesn't cover all 10 bits, we set all possible variants
-/// to avoid false negatives.
-///
-/// Returns a 32 × u32 array (1024 bits total).
-/// Index: upper 5 bits of the 10-bit hash
-/// Bit position: lower 5 bits of the 10-bit hash
-pub fn compute_prefix_bitmap(patterns_32: &[u32], masks_32: &[u32]) -> [u32; 32] {
-    let mut bitmap = [0u32; 32];
-
-    for (&pattern, &mask) in patterns_32.iter().zip(masks_32.iter()) {
-        // Extract upper 10 bits
-        let pattern_upper10 = pattern >> 22;
-        let mask_upper10 = mask >> 22;
-
-        // For bits not covered by mask, enumerate all variants
-        // This ensures no false negatives (but may have false positives)
-        for variant in 0u32..1024 {
-            // Check if this variant matches the pattern under the mask
-            if (variant & mask_upper10) == (pattern_upper10 & mask_upper10) {
-                let idx = (variant >> 5) as usize; // Upper 5 bits -> array index
-                let bit = variant & 0x1F; // Lower 5 bits -> bit position
-                bitmap[idx] |= 1 << bit;
-            }
-        }
-    }
-
-    bitmap
-}
-
 /// Compute base_pubkey = base_key * G
 ///
 /// Returns (X[4], Y[4]) in little-endian limbs
@@ -580,7 +548,6 @@ pub struct SequentialTripleBufferMiner {
     kernel: CudaFunction,
     patterns_dev: cudarc::driver::CudaSlice<u32>, // 32-bit for GPU (fast matching)
     masks_dev: cudarc::driver::CudaSlice<u32>,    // 32-bit for GPU
-    bitmap_dev: cudarc::driver::CudaSlice<u32>,   // 1024-bit bloom filter for pre-filtering
     // Original 64-bit patterns/masks for CPU re-verification
     patterns_64: Vec<u64>,
     masks_64: Vec<u64>,
@@ -635,11 +602,6 @@ impl SequentialTripleBufferMiner {
             stream_0.memcpy_htod(&masks_32, &mut masks_dev)?;
         }
 
-        // Compute and upload bloom filter bitmap for fast pre-filtering
-        let bitmap = compute_prefix_bitmap(&patterns_32, &masks_32);
-        let mut bitmap_dev = stream_0.alloc_zeros::<u32>(32)?;
-        stream_0.memcpy_htod(&bitmap, &mut bitmap_dev)?;
-
         // Compute and upload dG table to constant memory
         // This eliminates _PointMult(k, G) from the kernel!
         let dg_table = compute_dg_table();
@@ -682,7 +644,6 @@ impl SequentialTripleBufferMiner {
             kernel,
             patterns_dev,
             masks_dev,
-            bitmap_dev,
             patterns_64,
             masks_64,
             _dg_table_const: dg_table_const,
@@ -741,7 +702,6 @@ impl SequentialTripleBufferMiner {
         // dG_table is in constant memory (_dG_table), no argument needed
         builder.arg(&mut self.patterns_dev);
         builder.arg(&mut self.masks_dev);
-        builder.arg(&mut self.bitmap_dev);
         builder.arg(&num_prefixes_u32);
         builder.arg(&mut buf.matched_base_idx_dev);
         builder.arg(&mut buf.matched_offset_dev);
@@ -1000,9 +960,6 @@ pub fn generate_pubkeys_sequential(
     let patterns_32: Vec<u32> = patterns_64.iter().map(|p| (*p >> 32) as u32).collect();
     let masks_32: Vec<u32> = masks_64.iter().map(|m| (*m >> 32) as u32).collect();
 
-    // Compute bloom filter bitmap for fast pre-filtering
-    let bitmap = compute_prefix_bitmap(&patterns_32, &masks_32);
-
     // Allocate device memory for inputs
     let mut base_key_dev = stream.alloc_zeros::<u64>(4)?;
     let mut base_pubkey_x_dev = stream.alloc_zeros::<u64>(4)?;
@@ -1010,7 +967,6 @@ pub fn generate_pubkeys_sequential(
     // dG table is in constant memory (_dG_table)
     let mut patterns_dev = stream.alloc_zeros::<u32>(num_prefixes)?;
     let mut masks_dev = stream.alloc_zeros::<u32>(num_prefixes)?;
-    let mut bitmap_dev = stream.alloc_zeros::<u32>(32)?;
 
     // Allocate device memory for outputs
     let mut matched_base_idx_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
@@ -1035,7 +991,6 @@ pub fn generate_pubkeys_sequential(
     stream.memcpy_htod(&base_pubkey_y, &mut base_pubkey_y_dev)?;
     stream.memcpy_htod(&patterns_32, &mut patterns_dev)?;
     stream.memcpy_htod(&masks_32, &mut masks_dev)?;
-    stream.memcpy_htod(&bitmap, &mut bitmap_dev)?;
 
     // Calculate grid and block dimensions
     let num_blocks = (num_threads as u32).div_ceil(threads_per_block);
@@ -1056,7 +1011,6 @@ pub fn generate_pubkeys_sequential(
     // dG_table is in constant memory (_dG_table), no argument needed
     builder.arg(&mut patterns_dev);
     builder.arg(&mut masks_dev);
-    builder.arg(&mut bitmap_dev);
     builder.arg(&num_prefixes_u32);
     builder.arg(&mut matched_base_idx_dev);
     builder.arg(&mut matched_offset_dev);
