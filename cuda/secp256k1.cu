@@ -208,6 +208,61 @@ __device__ void _Mult64(uint64_t a, uint64_t b, uint64_t* low, uint64_t* high)
 }
 
 /**
+ * Reduce the 5th limb of a 320-bit number: sum[4] * 2^256 mod p = sum[4] * (2^32 + 977)
+ * Adds the result back to sum[0..4], avoiding billions of iterations in a naive reduction loop.
+ */
+__device__ void _ReduceOverflow(uint64_t sum[5])
+{
+    if (sum[4] == 0) return;
+
+    uint64_t factor = sum[4];
+
+    // factor * 2^32: shift left by 32 bits
+    uint64_t shifted_low = factor << 32;
+    uint64_t shifted_high = factor >> 32;
+
+    // factor * 977
+    uint64_t mult_low, mult_high;
+    _Mult64(factor, 977, &mult_low, &mult_high);
+
+    // Add (shifted_low + mult_low) to sum[0], (shifted_high + mult_high) to sum[1]
+    // This implements: factor * (2^32 + 977) = (shifted_low + mult_low) + ((shifted_high + mult_high) << 64)
+    uint64_t carry = 0;
+
+    // Add shifted_low + mult_low to sum[0]
+    uint64_t add0 = shifted_low + mult_low;
+    uint64_t carry0 = (add0 < shifted_low) ? 1 : 0;
+
+    uint64_t s0 = sum[0] + add0;
+    carry = (s0 < sum[0]) ? 1 : 0;
+    carry += carry0;
+    sum[0] = s0;
+
+    // Add shifted_high + mult_high + carry to sum[1]
+    uint64_t add1 = shifted_high + mult_high;
+    uint64_t carry1 = (add1 < shifted_high) ? 1 : 0;
+
+    uint64_t s1 = sum[1] + add1 + carry;
+    uint64_t new_carry = (s1 < sum[1]) ? 1 : 0;
+    if (add1 + carry < add1) new_carry = 1;
+    carry = new_carry + carry1;
+    sum[1] = s1;
+
+    // Propagate carry to sum[2]
+    uint64_t s2 = sum[2] + carry;
+    carry = (s2 < sum[2]) ? 1 : 0;
+    sum[2] = s2;
+
+    // Propagate carry to sum[3]
+    uint64_t s3 = sum[3] + carry;
+    carry = (s3 < sum[3]) ? 1 : 0;
+    sum[3] = s3;
+
+    // Set sum[4] to carry (should be 0 or very small)
+    sum[4] = carry;
+}
+
+/**
  * Reduce a 512-bit number modulo p
  * Uses secp256k1-specific reduction: p = 2^256 - 2^32 - 977
  *
@@ -267,55 +322,7 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     }
 
     // Reduce sum[4]: sum[4] * 2^256 mod p = sum[4] * (2^32 + 977)
-    // This avoids billions of iterations in the reduction loop
-    if (sum[4] > 0) {
-        // Compute sum[4] * (2^32 + 977)
-        uint64_t factor = sum[4];
-
-        // sum[4] * 2^32: shift left by 32 bits
-        uint64_t shifted_low = factor << 32;
-        uint64_t shifted_high = factor >> 32;
-
-        // sum[4] * 977
-        uint64_t mult_low, mult_high;
-        _Mult64(factor, 977, &mult_low, &mult_high);
-
-        // Add (shifted_low + mult_low) to sum[0], (shifted_high + mult_high) to sum[1]
-        // This implements: sum[4] * (2^32 + 977) = (shifted_low + mult_low) + ((shifted_high + mult_high) << 64)
-        uint64_t carry2 = 0;
-
-        // Add shifted_low + mult_low to sum[0]
-        uint64_t add0 = shifted_low + mult_low;
-        uint64_t carry0 = (add0 < shifted_low) ? 1 : 0;
-
-        uint64_t s0 = sum[0] + add0;
-        carry2 = (s0 < sum[0]) ? 1 : 0;
-        carry2 += carry0;
-        sum[0] = s0;
-
-        // Add shifted_high + mult_high + carry to sum[1]
-        uint64_t add1 = shifted_high + mult_high;
-        uint64_t carry1 = (add1 < shifted_high) ? 1 : 0;
-
-        uint64_t s1 = sum[1] + add1 + carry2;
-        uint64_t new_carry = (s1 < sum[1]) ? 1 : 0;
-        if (add1 + carry2 < add1) new_carry = 1;
-        carry2 = new_carry + carry1;
-        sum[1] = s1;
-
-        // Propagate carry to sum[2]
-        uint64_t s2 = sum[2] + carry2;
-        carry2 = (s2 < sum[2]) ? 1 : 0;
-        sum[2] = s2;
-
-        // Propagate carry to sum[3]
-        uint64_t s3 = sum[3] + carry2;
-        carry2 = (s3 < sum[3]) ? 1 : 0;
-        sum[3] = s3;
-
-        // Set sum[4] to carry (should be 0 or very small)
-        sum[4] = carry2;
-    }
+    _ReduceOverflow(sum);
 
     // Add to low
     uint64_t temp[5];
@@ -625,7 +632,7 @@ __device__ void _PointDouble(
  *   - S1 = Y1 (no multiplication)
  *   - Z3 = Z1 * H (no multiplication by Z2)
  *
- * Cost: 7M + 3S (vs 12M + 4S for general point addition) - about 40% faster!
+ * Cost: 8M + 3S (vs 12M + 4S for general point addition) - about 33% faster!
  */
 __device__ void _PointAddMixed(
     const uint64_t X1[4], const uint64_t Y1[4], const uint64_t Z1[4],  // Jacobian point
@@ -681,7 +688,7 @@ __device__ void _PointAddMixed(
 
     // Z3 = Z1 * H (since Z2 = 1)
     _ModMult(Z1, H, Z3);                     // M8: Z3
-    // Total: 7M + 3S (optimized by reusing X1*H^2)
+    // Total: 8M + 3S (optimized by reusing X1*H^2)
 }
 
 /**
