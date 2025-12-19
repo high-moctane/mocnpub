@@ -554,6 +554,8 @@ pub struct SequentialTripleBufferMiner {
     _patterns_const: cudarc::driver::CudaSlice<u8>,
     _masks_const: cudarc::driver::CudaSlice<u8>,
     _num_prefixes_const: cudarc::driver::CudaSlice<u8>,
+    _num_threads_const: cudarc::driver::CudaSlice<u8>,
+    _max_matches_const: cudarc::driver::CudaSlice<u8>,
     num_prefixes: usize,
     max_matches: u32,
     threads_per_block: u32,
@@ -619,6 +621,14 @@ impl SequentialTripleBufferMiner {
         stream_0.memcpy_htod(&masks_bytes, &mut masks_const)?;
         stream_0.memcpy_htod(&num_prefixes_bytes, &mut num_prefixes_const)?;
 
+        // Upload num_threads and max_matches to constant memory
+        let mut num_threads_const = module.get_global("_num_threads", &stream_0)?;
+        let mut max_matches_const = module.get_global("_max_matches", &stream_0)?;
+        let num_threads_bytes = (batch_size as u32).to_ne_bytes();
+        let max_matches_bytes = max_matches.to_ne_bytes();
+        stream_0.memcpy_htod(&num_threads_bytes, &mut num_threads_const)?;
+        stream_0.memcpy_htod(&max_matches_bytes, &mut max_matches_const)?;
+
         // Compute and upload dG table to constant memory
         // This eliminates _PointMult(k, G) from the kernel!
         let dg_table = compute_dg_table();
@@ -665,6 +675,8 @@ impl SequentialTripleBufferMiner {
             _patterns_const: patterns_const,
             _masks_const: masks_const,
             _num_prefixes_const: num_prefixes_const,
+            _num_threads_const: num_threads_const,
+            _max_matches_const: max_matches_const,
             num_prefixes,
             max_matches,
             threads_per_block,
@@ -710,21 +722,18 @@ impl SequentialTripleBufferMiner {
             shared_mem_bytes: 0,
         };
 
-        let num_threads_u32 = buf.num_threads as u32;
-
         let mut builder = stream.launch_builder(&self.kernel);
         builder.arg(&mut buf.base_key_dev);
         builder.arg(&mut buf.base_pubkey_x_dev);
         builder.arg(&mut buf.base_pubkey_y_dev);
-        // dG_table, patterns, masks, num_prefixes are all in constant memory
+        // All runtime constants are in constant memory:
+        // dG_table, patterns, masks, num_prefixes, num_threads, max_matches
         builder.arg(&mut buf.matched_base_idx_dev);
         builder.arg(&mut buf.matched_offset_dev);
         builder.arg(&mut buf.matched_pubkeys_x_dev);
         builder.arg(&mut buf.matched_secret_keys_dev);
         builder.arg(&mut buf.matched_endo_type_dev);
         builder.arg(&mut buf.match_count_dev);
-        builder.arg(&num_threads_u32);
-        builder.arg(&self.max_matches);
         unsafe {
             builder.launch(config)?;
         }
@@ -1018,6 +1027,14 @@ pub fn generate_pubkeys_sequential(
     stream.memcpy_htod(&masks_bytes, &mut masks_const)?;
     stream.memcpy_htod(&num_prefixes_bytes, &mut num_prefixes_const)?;
 
+    // Upload num_threads and max_matches to constant memory
+    let mut num_threads_const = module.get_global("_num_threads", &stream)?;
+    let mut max_matches_const = module.get_global("_max_matches", &stream)?;
+    let num_threads_bytes = (num_threads as u32).to_ne_bytes();
+    let max_matches_bytes = max_matches.to_ne_bytes();
+    stream.memcpy_htod(&num_threads_bytes, &mut num_threads_const)?;
+    stream.memcpy_htod(&max_matches_bytes, &mut max_matches_const)?;
+
     // Copy inputs to device
     stream.memcpy_htod(base_key.as_slice(), &mut base_key_dev)?;
     stream.memcpy_htod(&base_pubkey_x, &mut base_pubkey_x_dev)?;
@@ -1033,20 +1050,18 @@ pub fn generate_pubkeys_sequential(
     };
 
     // Launch kernel
-    let num_threads_u32 = num_threads as u32;
     let mut builder = stream.launch_builder(&kernel);
     builder.arg(&mut base_key_dev);
     builder.arg(&mut base_pubkey_x_dev);
     builder.arg(&mut base_pubkey_y_dev);
-    // dG_table, patterns, masks, num_prefixes are all in constant memory
+    // All runtime constants are in constant memory:
+    // dG_table, patterns, masks, num_prefixes, num_threads, max_matches
     builder.arg(&mut matched_base_idx_dev);
     builder.arg(&mut matched_offset_dev);
     builder.arg(&mut matched_pubkeys_x_dev);
     builder.arg(&mut matched_secret_keys_dev);
     builder.arg(&mut matched_endo_type_dev);
     builder.arg(&mut match_count_dev);
-    builder.arg(&num_threads_u32);
-    builder.arg(&max_matches);
     unsafe {
         builder.launch(config)?;
     }

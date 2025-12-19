@@ -80,6 +80,8 @@ __constant__ uint64_t _dG_table[192];
 __constant__ uint32_t _patterns[64];
 __constant__ uint32_t _masks[64];
 __constant__ uint32_t _num_prefixes;
+__constant__ uint32_t _num_threads;
+__constant__ uint32_t _max_matches;
 
 // ============================================================================
 // 256-bit Arithmetic Helper Functions (Device Functions)
@@ -1242,7 +1244,7 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefi
                 if ((x_upper & s_masks[p]) == (s_patterns[p] & s_masks[p])) {
                     // Match found! Atomically reserve output slot
                     uint32_t slot = atomicAdd(match_count, 1);
-                    if (slot < max_matches) {
+                    if (slot < max_matches) {  // Use kernel argument, not constant memory
                         matched_base_idx[slot] = idx;
                         matched_offset[slot] = i;
                         matched_endo_type[slot] = endo;  // 0=original, 1=β, 2=β²
@@ -1288,8 +1290,8 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefi
  *   - (constant memory) _patterns: prefix bit patterns
  *   - (constant memory) _masks: prefix bit masks
  *   - (constant memory) _num_prefixes: number of prefixes to match
- *   - num_threads: number of threads
- *   - max_matches: maximum number of matches to store
+ *   - (constant memory) _num_threads: number of threads
+ *   - (constant memory) _max_matches: maximum number of matches to store
  *
  * Output:
  *   - matched_base_idx: thread index of matched keys [max_matches]
@@ -1303,22 +1305,20 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     const uint64_t* base_key,       // Single base key [4 limbs]
     const uint64_t* base_pubkey_x,  // base_key * G, X coordinate [4 limbs]
     const uint64_t* base_pubkey_y,  // base_key * G, Y coordinate [4 limbs]
-    // dG_table, patterns, masks, num_prefixes are now in constant memory
+    // dG_table, patterns, masks, num_prefixes, num_threads, max_matches are now in constant memory
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
     uint64_t* matched_pubkeys_x,
     uint64_t* matched_secret_keys,  // Actual secret keys (not base_key)
     uint32_t* matched_endo_type,
-    uint32_t* match_count,
-    uint32_t num_threads,
-    uint32_t max_matches
+    uint32_t* match_count
 )
 {
-    // patterns, masks, num_prefixes are now in constant memory (_patterns, _masks, _num_prefixes)
-    // No shared memory loading or __syncthreads() needed!
+    // All runtime constants are now in constant memory:
+    // _patterns, _masks, _num_prefixes, _num_threads, _max_matches
 
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_threads) return;
+    if (idx >= _num_threads) return;
 
     // Local arrays for storing intermediate Jacobian coordinates
     uint64_t X_arr[MAX_KEYS_PER_THREAD][4];
@@ -1453,7 +1453,7 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
 
             if (matched) {
                 uint32_t slot = atomicAdd(match_count, 1);
-                if (slot < max_matches) {
+                if (slot < _max_matches) {
                     matched_base_idx[slot] = idx;
                     matched_offset[slot] = i;
                     matched_endo_type[slot] = endo;
