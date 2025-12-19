@@ -77,8 +77,8 @@ __constant__ uint64_t _dG_table[192];
 // patterns[i] = upper 32 bits of target prefix (after bech32 encoding)
 // masks[i] = bitmask for comparison (1s for significant bits)
 // Using constant memory for broadcast optimization (all threads read same values)
-__constant__ uint32_t _patterns[64];
-__constant__ uint32_t _masks[64];
+__constant__ uint32_t _patterns[256];
+__constant__ uint32_t _masks[256];
 __constant__ uint32_t _num_prefixes;
 __constant__ uint32_t _num_threads;
 __constant__ uint32_t _max_matches;

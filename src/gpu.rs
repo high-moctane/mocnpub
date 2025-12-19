@@ -604,11 +604,11 @@ impl SequentialTripleBufferMiner {
         let mut num_prefixes_const = module.get_global("_num_prefixes", &stream_0)?;
 
         // Convert to bytes and copy to constant memory
-        // Pad to 64 elements (constant memory array size)
+        // Pad to 256 elements (constant memory array size)
         let mut patterns_padded = patterns_32.clone();
-        patterns_padded.resize(64, 0);
+        patterns_padded.resize(256, 0);
         let mut masks_padded = masks_32.clone();
-        masks_padded.resize(64, 0);
+        masks_padded.resize(256, 0);
 
         let patterns_bytes: Vec<u8> = patterns_padded
             .iter()
@@ -1010,11 +1010,11 @@ pub fn generate_pubkeys_sequential(
     let mut masks_const = module.get_global("_masks", &stream)?;
     let mut num_prefixes_const = module.get_global("_num_prefixes", &stream)?;
 
-    // Pad to 64 elements (constant memory array size)
+    // Pad to 256 elements (constant memory array size)
     let mut patterns_padded = patterns_32.clone();
-    patterns_padded.resize(64, 0);
+    patterns_padded.resize(256, 0);
     let mut masks_padded = masks_32.clone();
-    masks_padded.resize(64, 0);
+    masks_padded.resize(256, 0);
 
     let patterns_bytes: Vec<u8> = patterns_padded
         .iter()
