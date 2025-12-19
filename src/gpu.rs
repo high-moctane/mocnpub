@@ -491,7 +491,6 @@ pub struct SequentialTripleBufferMiner {
     num_prefixes: usize,
     max_matches: u32,
     threads_per_block: u32,
-    batch_size: usize,
     bufs: Vec<SequentialStreamBuffer>,
 }
 
@@ -612,7 +611,6 @@ impl SequentialTripleBufferMiner {
             num_prefixes,
             max_matches,
             threads_per_block,
-            batch_size,
             bufs,
         })
     }
@@ -728,11 +726,6 @@ impl SequentialTripleBufferMiner {
         }
 
         Ok(results)
-    }
-
-    /// Get the batch size
-    pub fn batch_size(&self) -> usize {
-        self.batch_size
     }
 }
 
@@ -1415,7 +1408,7 @@ mod tests {
             .load_function("test_reduce512")
             .expect("Failed to load kernel");
 
-        // Step 10^2 の 512-bit 値（Python で計算した値）
+        // Step 10^2 as 512-bit value (calculated with Python)
         let input_512: Vec<u64> = vec![
             11103428889520133265u64,
             5940767142678773938u64,
@@ -1427,7 +1420,7 @@ mod tests {
             15272488u64,
         ];
 
-        // 期待値：Step 10^2 mod p
+        // Expected: Step 10^2 mod p
         let expected: Vec<u64> = vec![
             4111909762576034162u64,
             12458353550763596130u64,
