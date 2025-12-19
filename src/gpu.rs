@@ -546,14 +546,14 @@ pub struct SequentialTripleBufferMiner {
     streams: Vec<std::sync::Arc<cudarc::driver::CudaStream>>,
     _module: std::sync::Arc<CudaModule>,
     kernel: CudaFunction,
-    patterns_dev: cudarc::driver::CudaSlice<u32>, // 32-bit for GPU (fast matching)
-    masks_dev: cudarc::driver::CudaSlice<u32>,    // 32-bit for GPU
     // Original 64-bit patterns/masks for CPU re-verification
     patterns_64: Vec<u64>,
     masks_64: Vec<u64>,
-    // dG table is now in constant memory (_dG_table in CUDA)
-    // We keep the slice here to prevent it from being dropped (which would call cuMemFree)
+    // Constant memory slices (kept alive to prevent cuMemFree on drop)
     _dg_table_const: cudarc::driver::CudaSlice<u8>,
+    _patterns_const: cudarc::driver::CudaSlice<u8>,
+    _masks_const: cudarc::driver::CudaSlice<u8>,
+    _num_prefixes_const: cudarc::driver::CudaSlice<u8>,
     num_prefixes: usize,
     max_matches: u32,
     threads_per_block: u32,
@@ -595,12 +595,29 @@ impl SequentialTripleBufferMiner {
         let patterns_32: Vec<u32> = patterns_64.iter().map(|p| (*p >> 32) as u32).collect();
         let masks_32: Vec<u32> = masks_64.iter().map(|m| (*m >> 32) as u32).collect();
 
-        let mut patterns_dev = stream_0.alloc_zeros::<u32>(num_prefixes.max(1))?;
-        let mut masks_dev = stream_0.alloc_zeros::<u32>(num_prefixes.max(1))?;
-        if num_prefixes > 0 {
-            stream_0.memcpy_htod(&patterns_32, &mut patterns_dev)?;
-            stream_0.memcpy_htod(&masks_32, &mut masks_dev)?;
-        }
+        // Upload patterns/masks to constant memory
+        // Using get_global() to access __constant__ variables in CUDA
+        let mut patterns_const = module.get_global("_patterns", &stream_0)?;
+        let mut masks_const = module.get_global("_masks", &stream_0)?;
+        let mut num_prefixes_const = module.get_global("_num_prefixes", &stream_0)?;
+
+        // Convert to bytes and copy to constant memory
+        // Pad to 64 elements (constant memory array size)
+        let mut patterns_padded = patterns_32.clone();
+        patterns_padded.resize(64, 0);
+        let mut masks_padded = masks_32.clone();
+        masks_padded.resize(64, 0);
+
+        let patterns_bytes: Vec<u8> = patterns_padded
+            .iter()
+            .flat_map(|x| x.to_ne_bytes())
+            .collect();
+        let masks_bytes: Vec<u8> = masks_padded.iter().flat_map(|x| x.to_ne_bytes()).collect();
+        let num_prefixes_bytes = (num_prefixes as u32).to_ne_bytes();
+
+        stream_0.memcpy_htod(&patterns_bytes, &mut patterns_const)?;
+        stream_0.memcpy_htod(&masks_bytes, &mut masks_const)?;
+        stream_0.memcpy_htod(&num_prefixes_bytes, &mut num_prefixes_const)?;
 
         // Compute and upload dG table to constant memory
         // This eliminates _PointMult(k, G) from the kernel!
@@ -642,11 +659,12 @@ impl SequentialTripleBufferMiner {
             streams,
             _module: module,
             kernel,
-            patterns_dev,
-            masks_dev,
             patterns_64,
             masks_64,
             _dg_table_const: dg_table_const,
+            _patterns_const: patterns_const,
+            _masks_const: masks_const,
+            _num_prefixes_const: num_prefixes_const,
             num_prefixes,
             max_matches,
             threads_per_block,
@@ -693,16 +711,12 @@ impl SequentialTripleBufferMiner {
         };
 
         let num_threads_u32 = buf.num_threads as u32;
-        let num_prefixes_u32 = self.num_prefixes as u32;
 
         let mut builder = stream.launch_builder(&self.kernel);
         builder.arg(&mut buf.base_key_dev);
         builder.arg(&mut buf.base_pubkey_x_dev);
         builder.arg(&mut buf.base_pubkey_y_dev);
-        // dG_table is in constant memory (_dG_table), no argument needed
-        builder.arg(&mut self.patterns_dev);
-        builder.arg(&mut self.masks_dev);
-        builder.arg(&num_prefixes_u32);
+        // dG_table, patterns, masks, num_prefixes are all in constant memory
         builder.arg(&mut buf.matched_base_idx_dev);
         builder.arg(&mut buf.matched_offset_dev);
         builder.arg(&mut buf.matched_pubkeys_x_dev);
@@ -964,9 +978,6 @@ pub fn generate_pubkeys_sequential(
     let mut base_key_dev = stream.alloc_zeros::<u64>(4)?;
     let mut base_pubkey_x_dev = stream.alloc_zeros::<u64>(4)?;
     let mut base_pubkey_y_dev = stream.alloc_zeros::<u64>(4)?;
-    // dG table is in constant memory (_dG_table)
-    let mut patterns_dev = stream.alloc_zeros::<u32>(num_prefixes)?;
-    let mut masks_dev = stream.alloc_zeros::<u32>(num_prefixes)?;
 
     // Allocate device memory for outputs
     let mut matched_base_idx_dev = stream.alloc_zeros::<u32>(max_matches as usize)?;
@@ -985,12 +996,32 @@ pub fn generate_pubkeys_sequential(
     let dg_table_bytes: Vec<u8> = dg_table.iter().flat_map(|x| x.to_ne_bytes()).collect();
     stream.memcpy_htod(&dg_table_bytes, &mut dg_table_const)?;
 
+    // Upload patterns/masks/num_prefixes to constant memory
+    let mut patterns_const = module.get_global("_patterns", &stream)?;
+    let mut masks_const = module.get_global("_masks", &stream)?;
+    let mut num_prefixes_const = module.get_global("_num_prefixes", &stream)?;
+
+    // Pad to 64 elements (constant memory array size)
+    let mut patterns_padded = patterns_32.clone();
+    patterns_padded.resize(64, 0);
+    let mut masks_padded = masks_32.clone();
+    masks_padded.resize(64, 0);
+
+    let patterns_bytes: Vec<u8> = patterns_padded
+        .iter()
+        .flat_map(|x| x.to_ne_bytes())
+        .collect();
+    let masks_bytes: Vec<u8> = masks_padded.iter().flat_map(|x| x.to_ne_bytes()).collect();
+    let num_prefixes_bytes = (num_prefixes as u32).to_ne_bytes();
+
+    stream.memcpy_htod(&patterns_bytes, &mut patterns_const)?;
+    stream.memcpy_htod(&masks_bytes, &mut masks_const)?;
+    stream.memcpy_htod(&num_prefixes_bytes, &mut num_prefixes_const)?;
+
     // Copy inputs to device
     stream.memcpy_htod(base_key.as_slice(), &mut base_key_dev)?;
     stream.memcpy_htod(&base_pubkey_x, &mut base_pubkey_x_dev)?;
     stream.memcpy_htod(&base_pubkey_y, &mut base_pubkey_y_dev)?;
-    stream.memcpy_htod(&patterns_32, &mut patterns_dev)?;
-    stream.memcpy_htod(&masks_32, &mut masks_dev)?;
 
     // Calculate grid and block dimensions
     let num_blocks = (num_threads as u32).div_ceil(threads_per_block);
@@ -1003,15 +1034,11 @@ pub fn generate_pubkeys_sequential(
 
     // Launch kernel
     let num_threads_u32 = num_threads as u32;
-    let num_prefixes_u32 = num_prefixes as u32;
     let mut builder = stream.launch_builder(&kernel);
     builder.arg(&mut base_key_dev);
     builder.arg(&mut base_pubkey_x_dev);
     builder.arg(&mut base_pubkey_y_dev);
-    // dG_table is in constant memory (_dG_table), no argument needed
-    builder.arg(&mut patterns_dev);
-    builder.arg(&mut masks_dev);
-    builder.arg(&num_prefixes_u32);
+    // dG_table, patterns, masks, num_prefixes are all in constant memory
     builder.arg(&mut matched_base_idx_dev);
     builder.arg(&mut matched_offset_dev);
     builder.arg(&mut matched_pubkeys_x_dev);

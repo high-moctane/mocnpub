@@ -72,6 +72,16 @@ __constant__ uint64_t _Beta2[4] = {
 __constant__ uint64_t _dG_table[192];
 
 // ============================================================================
+// Prefix Matching Constants (set at runtime via cuMemcpyHtoD)
+// ============================================================================
+// patterns[i] = upper 32 bits of target prefix (after bech32 encoding)
+// masks[i] = bitmask for comparison (1s for significant bits)
+// Using constant memory for broadcast optimization (all threads read same values)
+__constant__ uint32_t _patterns[64];
+__constant__ uint32_t _masks[64];
+__constant__ uint32_t _num_prefixes;
+
+// ============================================================================
 // 256-bit Arithmetic Helper Functions (Device Functions)
 // ============================================================================
 
@@ -1274,9 +1284,10 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_with_prefi
  *
  * Input:
  *   - base_key: single starting private key [4 limbs]
- *   - patterns: prefix bit patterns [num_prefixes]
- *   - masks: prefix bit masks [num_prefixes]
- *   - num_prefixes: number of prefixes to match
+ *   - base_pubkey_x/y: precomputed base_key * G [4 limbs each]
+ *   - (constant memory) _patterns: prefix bit patterns
+ *   - (constant memory) _masks: prefix bit masks
+ *   - (constant memory) _num_prefixes: number of prefixes to match
  *   - num_threads: number of threads
  *   - max_matches: maximum number of matches to store
  *
@@ -1292,10 +1303,7 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     const uint64_t* base_key,       // Single base key [4 limbs]
     const uint64_t* base_pubkey_x,  // base_key * G, X coordinate [4 limbs]
     const uint64_t* base_pubkey_y,  // base_key * G, Y coordinate [4 limbs]
-    // dG_table is now in constant memory (_dG_table)
-    const uint32_t* patterns,       // 32-bit patterns (upper 32 bits of pubkey X)
-    const uint32_t* masks,          // 32-bit masks
-    uint32_t num_prefixes,
+    // dG_table, patterns, masks, num_prefixes are now in constant memory
     uint32_t* matched_base_idx,
     uint32_t* matched_offset,
     uint64_t* matched_pubkeys_x,
@@ -1306,16 +1314,8 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     uint32_t max_matches
 )
 {
-    // === Load patterns and masks into shared memory for fast access ===
-    // Using 32-bit for faster comparison (CPU will re-verify with 64-bit)
-    __shared__ uint32_t s_patterns[64];
-    __shared__ uint32_t s_masks[64];
-
-    if (threadIdx.x < num_prefixes && threadIdx.x < 64) {
-        s_patterns[threadIdx.x] = patterns[threadIdx.x];
-        s_masks[threadIdx.x] = masks[threadIdx.x];
-    }
-    __syncthreads();
+    // patterns, masks, num_prefixes are now in constant memory (_patterns, _masks, _num_prefixes)
+    // No shared memory loading or __syncthreads() needed!
 
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_threads) return;
@@ -1419,19 +1419,19 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
 
             // Optimized path for single prefix (most common case)
             bool matched = false;
-            if (num_prefixes == 1) {
-                matched = ((x_upper32 & s_masks[0]) == s_patterns[0]);
+            if (_num_prefixes == 1) {
+                matched = ((x_upper32 & _masks[0]) == _patterns[0]);
             } else {
                 // 32bit × 2 concatenation: check 2 prefixes with 1 64-bit operation
                 // This halves the loop iterations for multiple prefixes
                 uint64_t x_doubled = ((uint64_t)x_upper32 << 32) | x_upper32;
 
-                uint32_t pair_count = num_prefixes / 2;
+                uint32_t pair_count = _num_prefixes / 2;
                 for (uint32_t p = 0; p < pair_count; p++) {
                     uint32_t idx = p * 2;
                     // Concatenate two 32-bit patterns/masks into 64-bit
-                    uint64_t combined_pattern = ((uint64_t)s_patterns[idx + 1] << 32) | s_patterns[idx];
-                    uint64_t combined_mask = ((uint64_t)s_masks[idx + 1] << 32) | s_masks[idx];
+                    uint64_t combined_pattern = ((uint64_t)_patterns[idx + 1] << 32) | _patterns[idx];
+                    uint64_t combined_mask = ((uint64_t)_masks[idx + 1] << 32) | _masks[idx];
 
                     // XOR and mask: if lower 32 bits are 0, patterns[idx] matches
                     //               if upper 32 bits are 0, patterns[idx+1] matches
@@ -1443,9 +1443,9 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
                 }
 
                 // Handle odd number of prefixes: check the last one separately
-                if (!matched && (num_prefixes & 1)) {
-                    uint32_t p = num_prefixes - 1;
-                    if ((x_upper32 & s_masks[p]) == s_patterns[p]) {
+                if (!matched && (_num_prefixes & 1)) {
+                    uint32_t p = _num_prefixes - 1;
+                    if ((x_upper32 & _masks[p]) == _patterns[p]) {
                         matched = true;
                     }
                 }
