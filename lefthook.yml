@@ -6,3 +6,5 @@ pre-commit:
     fmt:
       run: cargo fmt
       stage_fixed: true
+    clippy:
+      run: cargo clippy --all-targets -- -D warnings

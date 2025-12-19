@@ -577,6 +577,7 @@ fn run_verify(iterations: u64, batch_size: usize, miners_opt: Option<usize>) -> 
                 let mut base_keys: [[u64; 4]; 3] = [[0u64; 4]; 3];
 
                 // Initial launches for all 3 buffers
+                #[allow(clippy::needless_range_loop)]
                 for buf_idx in 0..3 {
                     let mut key_bytes = [0u8; 32];
                     rng.fill_bytes(&mut key_bytes);
