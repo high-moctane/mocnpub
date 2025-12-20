@@ -201,8 +201,7 @@ __device__ void _Sub256(const uint64_t a[4], const uint64_t b[4], uint64_t resul
     result[2] = ((uint64_t)r5 << 32) | r4;
     result[3] = ((uint64_t)r7 << 32) | r6;
     // subc.u32 0, 0 with borrow gives 0xFFFFFFFF if borrow, 0 otherwise
-    // Use bitwise AND instead of ternary to save one instruction (setp+selp → and)
-    *borrow_out = borrow & 1;
+    *borrow_out = borrow ? 1 : 0;
 }
 
 /**
