@@ -1232,8 +1232,8 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     if (idx >= _num_threads) return;
 
     // Local arrays for storing intermediate Jacobian coordinates
+    // Note: Y_arr is not needed! Prefix matching only uses x-coordinate (BIP-340)
     uint64_t X_arr[MAX_KEYS_PER_THREAD][4];
-    uint64_t Y_arr[MAX_KEYS_PER_THREAD][4];
     uint64_t Z_arr[MAX_KEYS_PER_THREAD][4];
     uint64_t c[MAX_KEYS_PER_THREAD][4];
 
@@ -1270,7 +1270,6 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
 
     for (int i = 0; i < 4; i++) {
         X_arr[0][i] = Px[i];
-        Y_arr[0][i] = Py[i];
         Z_arr[0][i] = Pz[i];
     }
 
@@ -1284,7 +1283,6 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
             Py[i] = tempY[i];
             Pz[i] = tempZ[i];
             X_arr[key_idx][i] = Px[i];
-            Y_arr[key_idx][i] = Py[i];
             Z_arr[key_idx][i] = Pz[i];
         }
     }
