@@ -82,46 +82,126 @@ __constant__ uint32_t _max_matches;
 /**
  * Add two 256-bit numbers (a + b)
  * Returns the result and carry
+ *
+ * [EXPERIMENTAL] PTX implementation using 32-bit carry chain instructions.
+ * Uses add.cc/addc.cc for hardware carry propagation instead of
+ * software carry detection (setp.lt + selp pattern).
+ *
+ * Trade-off: 64-bit <-> 32-bit conversion overhead vs. carry chain efficiency
+ * Needs Windows benchmarking for accurate comparison.
  */
 __device__ void _Add256(const uint64_t a[4], const uint64_t b[4], uint64_t result[4], uint64_t* carry)
 {
-    uint64_t c = 0;
+    // Extract 32-bit limbs from 64-bit values (little-endian)
+    uint32_t a0 = (uint32_t)a[0];
+    uint32_t a1 = (uint32_t)(a[0] >> 32);
+    uint32_t a2 = (uint32_t)a[1];
+    uint32_t a3 = (uint32_t)(a[1] >> 32);
+    uint32_t a4 = (uint32_t)a[2];
+    uint32_t a5 = (uint32_t)(a[2] >> 32);
+    uint32_t a6 = (uint32_t)a[3];
+    uint32_t a7 = (uint32_t)(a[3] >> 32);
 
-    // Add with carry
-    for (int i = 0; i < 4; i++) {
-        uint64_t sum = a[i] + c;
-        c = (sum < c) ? 1 : 0;  // Detect overflow
+    uint32_t b0 = (uint32_t)b[0];
+    uint32_t b1 = (uint32_t)(b[0] >> 32);
+    uint32_t b2 = (uint32_t)b[1];
+    uint32_t b3 = (uint32_t)(b[1] >> 32);
+    uint32_t b4 = (uint32_t)b[2];
+    uint32_t b5 = (uint32_t)(b[2] >> 32);
+    uint32_t b6 = (uint32_t)b[3];
+    uint32_t b7 = (uint32_t)(b[3] >> 32);
 
-        uint64_t final_sum = sum + b[i];
-        c += (final_sum < b[i]) ? 1 : 0;  // Detect overflow
+    uint32_t r0, r1, r2, r3, r4, r5, r6, r7, c;
 
-        result[i] = final_sum;
-    }
+    // 256-bit addition using PTX carry chain
+    // add.cc  = add with carry-out
+    // addc.cc = add with carry-in and carry-out
+    // addc    = add with carry-in (final)
+    asm volatile (
+        "add.cc.u32   %0, %9, %17;\n\t"    // r0 = a0 + b0, carry out
+        "addc.cc.u32  %1, %10, %18;\n\t"   // r1 = a1 + b1 + carry, carry out
+        "addc.cc.u32  %2, %11, %19;\n\t"   // r2 = a2 + b2 + carry, carry out
+        "addc.cc.u32  %3, %12, %20;\n\t"   // r3 = a3 + b3 + carry, carry out
+        "addc.cc.u32  %4, %13, %21;\n\t"   // r4 = a4 + b4 + carry, carry out
+        "addc.cc.u32  %5, %14, %22;\n\t"   // r5 = a5 + b5 + carry, carry out
+        "addc.cc.u32  %6, %15, %23;\n\t"   // r6 = a6 + b6 + carry, carry out
+        "addc.cc.u32  %7, %16, %24;\n\t"   // r7 = a7 + b7 + carry, carry out
+        "addc.u32     %8, 0, 0;\n\t"       // c = 0 + 0 + carry (extract final carry)
+        : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3),
+          "=r"(r4), "=r"(r5), "=r"(r6), "=r"(r7), "=r"(c)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
+          "r"(a4), "r"(a5), "r"(a6), "r"(a7),
+          "r"(b0), "r"(b1), "r"(b2), "r"(b3),
+          "r"(b4), "r"(b5), "r"(b6), "r"(b7)
+    );
 
+    // Combine 32-bit limbs back to 64-bit values
+    result[0] = ((uint64_t)r1 << 32) | r0;
+    result[1] = ((uint64_t)r3 << 32) | r2;
+    result[2] = ((uint64_t)r5 << 32) | r4;
+    result[3] = ((uint64_t)r7 << 32) | r6;
     *carry = c;
 }
 
 /**
  * Subtract two 256-bit numbers (a - b)
  * Returns the result and borrow (1 if a < b, 0 otherwise)
+ *
+ * [EXPERIMENTAL] PTX implementation using 32-bit borrow chain instructions.
+ * Uses sub.cc/subc.cc for hardware borrow propagation.
  */
 __device__ void _Sub256(const uint64_t a[4], const uint64_t b[4], uint64_t result[4], uint64_t* borrow_out)
 {
-    uint64_t borrow = 0;
+    // Extract 32-bit limbs from 64-bit values (little-endian)
+    uint32_t a0 = (uint32_t)a[0];
+    uint32_t a1 = (uint32_t)(a[0] >> 32);
+    uint32_t a2 = (uint32_t)a[1];
+    uint32_t a3 = (uint32_t)(a[1] >> 32);
+    uint32_t a4 = (uint32_t)a[2];
+    uint32_t a5 = (uint32_t)(a[2] >> 32);
+    uint32_t a6 = (uint32_t)a[3];
+    uint32_t a7 = (uint32_t)(a[3] >> 32);
 
-    for (int i = 0; i < 4; i++) {
-        // Two-stage subtraction to avoid overflow in borrow detection
-        uint64_t temp_diff = a[i] - b[i];
-        uint64_t borrow1 = (a[i] < b[i]) ? 1 : 0;
+    uint32_t b0 = (uint32_t)b[0];
+    uint32_t b1 = (uint32_t)(b[0] >> 32);
+    uint32_t b2 = (uint32_t)b[1];
+    uint32_t b3 = (uint32_t)(b[1] >> 32);
+    uint32_t b4 = (uint32_t)b[2];
+    uint32_t b5 = (uint32_t)(b[2] >> 32);
+    uint32_t b6 = (uint32_t)b[3];
+    uint32_t b7 = (uint32_t)(b[3] >> 32);
 
-        uint64_t final_diff = temp_diff - borrow;
-        uint64_t borrow2 = (temp_diff < borrow) ? 1 : 0;
+    uint32_t r0, r1, r2, r3, r4, r5, r6, r7, borrow;
 
-        result[i] = final_diff;
-        borrow = borrow1 | borrow2;
-    }
+    // 256-bit subtraction using PTX borrow chain
+    // sub.cc  = subtract with borrow-out
+    // subc.cc = subtract with borrow-in and borrow-out
+    // subc    = subtract with borrow-in (final)
+    asm volatile (
+        "sub.cc.u32   %0, %9, %17;\n\t"    // r0 = a0 - b0, borrow out
+        "subc.cc.u32  %1, %10, %18;\n\t"   // r1 = a1 - b1 - borrow, borrow out
+        "subc.cc.u32  %2, %11, %19;\n\t"   // r2 = a2 - b2 - borrow, borrow out
+        "subc.cc.u32  %3, %12, %20;\n\t"   // r3 = a3 - b3 - borrow, borrow out
+        "subc.cc.u32  %4, %13, %21;\n\t"   // r4 = a4 - b4 - borrow, borrow out
+        "subc.cc.u32  %5, %14, %22;\n\t"   // r5 = a5 - b5 - borrow, borrow out
+        "subc.cc.u32  %6, %15, %23;\n\t"   // r6 = a6 - b6 - borrow, borrow out
+        "subc.cc.u32  %7, %16, %24;\n\t"   // r7 = a7 - b7 - borrow, borrow out
+        "subc.u32     %8, 0, 0;\n\t"       // borrow = 0 - 0 - borrow (extract final borrow)
+        : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3),
+          "=r"(r4), "=r"(r5), "=r"(r6), "=r"(r7), "=r"(borrow)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
+          "r"(a4), "r"(a5), "r"(a6), "r"(a7),
+          "r"(b0), "r"(b1), "r"(b2), "r"(b3),
+          "r"(b4), "r"(b5), "r"(b6), "r"(b7)
+    );
 
-    *borrow_out = borrow;
+    // Combine 32-bit limbs back to 64-bit values
+    result[0] = ((uint64_t)r1 << 32) | r0;
+    result[1] = ((uint64_t)r3 << 32) | r2;
+    result[2] = ((uint64_t)r5 << 32) | r4;
+    result[3] = ((uint64_t)r7 << 32) | r6;
+    // subc.u32 0, 0 with borrow gives 0xFFFFFFFF if borrow, 0 otherwise
+    *borrow_out = borrow ? 1 : 0;
 }
 
 /**
