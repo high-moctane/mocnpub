@@ -76,6 +76,67 @@ __constant__ uint32_t _num_threads;
 __constant__ uint32_t _max_matches;
 
 // ============================================================================
+// 64-bit Arithmetic Primitives (PTX carry chain)
+// ============================================================================
+
+/**
+ * Add two 64-bit numbers (a + b)
+ * Returns carry (0 or 1)
+ *
+ * Uses PTX 32-bit carry chain for efficiency.
+ */
+__device__ uint32_t _Add64(uint64_t a, uint64_t b, uint64_t* sum)
+{
+    uint32_t a0 = (uint32_t)a;
+    uint32_t a1 = (uint32_t)(a >> 32);
+    uint32_t b0 = (uint32_t)b;
+    uint32_t b1 = (uint32_t)(b >> 32);
+    uint32_t r0, r1, carry;
+
+    asm volatile (
+        "add.cc.u32  %0, %3, %5;\n\t"   // r0 = a0 + b0, carry out
+        "addc.cc.u32 %1, %4, %6;\n\t"   // r1 = a1 + b1 + carry, carry out
+        "addc.u32    %2, 0, 0;\n\t"     // carry = 0 + 0 + carry
+        : "=r"(r0), "=r"(r1), "=r"(carry)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1)
+    );
+
+    *sum = ((uint64_t)r1 << 32) | r0;
+    return carry;
+}
+
+/**
+ * Add two 64-bit numbers with carry-in (a + b + carry_in)
+ * Returns carry-out (0 or 1)
+ *
+ * Uses PTX 32-bit carry chain for efficiency.
+ */
+__device__ uint32_t _Addc64(uint64_t a, uint64_t b, uint32_t carry_in, uint64_t* sum)
+{
+    uint32_t a0 = (uint32_t)a;
+    uint32_t a1 = (uint32_t)(a >> 32);
+    uint32_t b0 = (uint32_t)b;
+    uint32_t b1 = (uint32_t)(b >> 32);
+    uint32_t r0, r1, carry_out;
+
+    asm volatile (
+        // First: a + b
+        "add.cc.u32  %0, %3, %5;\n\t"   // r0 = a0 + b0
+        "addc.cc.u32 %1, %4, %6;\n\t"   // r1 = a1 + b1 + carry
+        "addc.u32    %2, 0, 0;\n\t"     // carry_out = carry (from a + b)
+        // Second: + carry_in
+        "add.cc.u32  %0, %0, %7;\n\t"   // r0 = r0 + carry_in
+        "addc.cc.u32 %1, %1, 0;\n\t"    // r1 = r1 + carry
+        "addc.u32    %2, %2, 0;\n\t"    // carry_out = carry_out + carry
+        : "=r"(r0), "=r"(r1), "=r"(carry_out)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(carry_in)
+    );
+
+    *sum = ((uint64_t)r1 << 32) | r0;
+    return carry_out;
+}
+
+// ============================================================================
 // 256-bit Arithmetic Helper Functions (Device Functions)
 // ============================================================================
 
