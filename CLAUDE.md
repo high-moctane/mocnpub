@@ -255,11 +255,12 @@
 | GPU + Constant Memory（patterns/masks） | 4.141B keys/sec | 59,157x |
 | GPU + Addition Chain（_ModInv 乗算 128→14） | 4.199B keys/sec | 59,991x |
 | GPU + インライン PTX（_Add256/_Sub256 carry chain） | 4.313B keys/sec | 61,614x |
-| **GPU + _Add64/_Addc64 で _Reduce512 最適化** | **4.532B keys/sec** | **64,743x** 🔥🔥🔥 |
+| GPU + _Add64/_Addc64 で _Reduce512 最適化 | 4.532B keys/sec | 64,743x |
+| **GPU + _ReduceOverflow も PTX 化** | **4.655B keys/sec** | **66,500x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 
-**32 prefix 時：4.308B keys/sec** 💪
+**32 prefix 時：4.412B keys/sec** 💪
 
 ---
 
