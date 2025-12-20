@@ -591,60 +591,108 @@ __device__ void _ModSquare(const uint64_t a[4], uint64_t result[4])
 /**
  * Modular inverse: a^(-1) mod p
  * Uses Fermat's Little Theorem: a^(p-2) mod p = a^(-1) mod p
- * Implemented using binary exponentiation (square-and-multiply, MSB to LSB)
+ *
+ * Optimized using Addition Chain (based on RustCrypto k256 / Peter Dettman's work):
+ * - Standard binary exponentiation: 256 squares + ~128 multiplications
+ * - Addition Chain: 255 squares + 14 multiplications (114 fewer multiplications!)
+ *
+ * The chain exploits the structure of p-2:
+ *   p-2 = 0xFFFFFFFEFFFFFC2D has block lengths {1, 2, 22, 223}
+ *   Chain: [1], [2], 3, 6, 9, 11, [22], 44, 88, 176, 220, [223]
  */
 __device__ void _ModInv(const uint64_t a[4], uint64_t result[4])
 {
-    // p - 2 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2D
-    const uint64_t exp[4] = {
-        0xFFFFFFFEFFFFFC2DULL,
-        0xFFFFFFFFFFFFFFFFULL,
-        0xFFFFFFFFFFFFFFFFULL,
-        0xFFFFFFFFFFFFFFFFULL
-    };
+    uint64_t x2[4], x3[4], x6[4], x9[4], x11[4];
+    uint64_t x22[4], x44[4], x88[4], x176[4], x220[4], x223[4];
+    uint64_t t[4];
 
-    // Binary exponentiation: compute a^exp mod p
-    // Process from MSB to LSB
-    uint64_t res[4] = {1, 0, 0, 0};  // Start with 1
-    bool started = false;  // Track if we've seen the first 1 bit
+    // x2 = a^3 (binary: 11)
+    _ModSquare(a, t);           // a^2
+    _ModMult(t, a, x2);         // a^3
 
-    // Iterate through all bits of exp (from MSB to LSB)
-    for (int i = 3; i >= 0; i--) {
-        uint64_t e = exp[i];
-        for (int j = 63; j >= 0; j--) {
-            uint64_t bit = (e >> j) & 1;
+    // x3 = a^7 (binary: 111)
+    _ModSquare(x2, t);          // a^6
+    _ModMult(t, a, x3);         // a^7
 
-            if (!started) {
-                // Skip leading zeros until we find the first 1
-                if (bit == 1) {
-                    started = true;
-                    // First bit: res = a (no squaring yet)
-                    for (int k = 0; k < 4; k++) {
-                        res[k] = a[k];
-                    }
-                }
-            } else {
-                // Square res
-                uint64_t temp[4];
-                _ModSquare(res, temp);
-                for (int k = 0; k < 4; k++) {
-                    res[k] = temp[k];
-                }
+    // x6 = a^63 (binary: 111111) = a^(2^6 - 1)
+    _ModSquare(x3, t);          // 1
+    _ModSquare(t, t);           // 2
+    _ModSquare(t, t);           // 3
+    _ModMult(t, x3, x6);        // a^63
 
-                // If bit is set, multiply by a
-                if (bit == 1) {
-                    _ModMult(res, a, temp);
-                    for (int k = 0; k < 4; k++) {
-                        res[k] = temp[k];
-                    }
-                }
-            }
-        }
+    // x9 = a^511 (binary: 111111111) = a^(2^9 - 1)
+    _ModSquare(x6, t);          // 1
+    _ModSquare(t, t);           // 2
+    _ModSquare(t, t);           // 3
+    _ModMult(t, x3, x9);        // a^511
+
+    // x11 = a^2047 (binary: 11111111111) = a^(2^11 - 1)
+    _ModSquare(x9, t);          // 1
+    _ModSquare(t, t);           // 2
+    _ModMult(t, x2, x11);       // a^2047
+
+    // x22 = a^(2^22 - 1)
+    for (int i = 0; i < 11; i++) {
+        _ModSquare(i == 0 ? x11 : t, t);
     }
+    _ModMult(t, x11, x22);
 
-    for (int i = 0; i < 4; i++) {
-        result[i] = res[i];
+    // x44 = a^(2^44 - 1)
+    for (int i = 0; i < 22; i++) {
+        _ModSquare(i == 0 ? x22 : t, t);
     }
+    _ModMult(t, x22, x44);
+
+    // x88 = a^(2^88 - 1)
+    for (int i = 0; i < 44; i++) {
+        _ModSquare(i == 0 ? x44 : t, t);
+    }
+    _ModMult(t, x44, x88);
+
+    // x176 = a^(2^176 - 1)
+    for (int i = 0; i < 88; i++) {
+        _ModSquare(i == 0 ? x88 : t, t);
+    }
+    _ModMult(t, x88, x176);
+
+    // x220 = a^(2^220 - 1)
+    for (int i = 0; i < 44; i++) {
+        _ModSquare(i == 0 ? x176 : t, t);
+    }
+    _ModMult(t, x44, x220);
+
+    // x223 = a^(2^223 - 1)
+    _ModSquare(x220, t);        // 1
+    _ModSquare(t, t);           // 2
+    _ModSquare(t, t);           // 3
+    _ModMult(t, x3, x223);
+
+    // Final assembly: compute a^(p-2) from x223, x22, x2, and a
+    // p-2 = 2^256 - 2^32 - 979
+    //     = (2^223 - 1) * 2^23 + (2^22 - 1) * 2^(23-22) + ...
+
+    // t = x223 * 2^23
+    for (int i = 0; i < 23; i++) {
+        _ModSquare(i == 0 ? x223 : t, t);
+    }
+    _ModMult(t, x22, t);        // + x22
+
+    // t = t * 2^5
+    for (int i = 0; i < 5; i++) {
+        _ModSquare(t, t);
+    }
+    _ModMult(t, a, t);          // + a
+
+    // t = t * 2^3
+    _ModSquare(t, t);           // 1
+    _ModSquare(t, t);           // 2
+    _ModSquare(t, t);           // 3
+    _ModMult(t, x2, t);         // + x2 (= a^3)
+
+    // t = t * 2^2
+    _ModSquare(t, t);           // 1
+    _ModSquare(t, t);           // 2
+    _ModMult(t, a, result);     // + a -> final result
 }
 
 // ============================================================================
