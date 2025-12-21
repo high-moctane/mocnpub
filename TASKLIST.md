@@ -2,7 +2,7 @@
 
 **作成日**: 2025-11-14
 **最終更新**: 2025-12-21
-**進捗**: Step 0〜17 完了！🎉 即値化関数削除で 4.681B keys/sec 達成！🔥🔥🔥
+**進捗**: Step 0〜18 完了！🎉 _Add64x3 で _ModMult/_ModSquare 最適化、4.841B keys/sec 達成！🔥🔥🔥
 
 ---
 
@@ -29,6 +29,7 @@
 | Step 15 | _Add64/_Addc64 で _Reduce512 最適化（+5.1%）| ✅ 完了 🔥🔥🔥 |
 | Step 16 | _ReduceOverflow も PTX 化（+2.7%）| ✅ 完了 🔥🔥🔥 |
 | Step 17 | 即値化関数削除（-119行、+0.6%）| ✅ 完了 🔥 |
+| Step 18 | _Add64x3 で _ModMult/_ModSquare 最適化（+3.4%）| ✅ 完了 🔥🔥🔥 |
 
 ---
 
@@ -63,11 +64,12 @@
 | GPU + インライン PTX（_Add256/_Sub256 carry chain） | 4.313B keys/sec | 61,614x |
 | GPU + _Add64/_Addc64 で _Reduce512 最適化 | 4.532B keys/sec | 64,743x |
 | GPU + _ReduceOverflow も PTX 化 | 4.655B keys/sec | 66,500x |
-| **GPU + 即値化関数削除（命令キャッシュ効率向上）** | **4.681B keys/sec** | **66,871x** 🔥🔥🔥 |
+| GPU + 即値化関数削除（命令キャッシュ効率向上） | 4.681B keys/sec | 66,871x |
+| **GPU + _Add64x3 で _ModMult/_ModSquare 最適化** | **4.841B keys/sec** | **69,157x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 **CPU 使用率が 100% → 1% に削減！電力消費大幅削減！** 💡
-**32 prefix 時：4.423B keys/sec** 💪
+**32 prefix 時：4.560B keys/sec** 💪
 
 ---
 
