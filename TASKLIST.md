@@ -2,7 +2,7 @@
 
 **作成日**: 2025-11-14
 **最終更新**: 2025-12-21
-**進捗**: Step 0〜21 完了！🎉 5.219B keys/sec 達成！🔥🔥🔥
+**進捗**: Step 0〜22 完了！🎉 5.287B keys/sec 達成！🔥🔥🔥
 
 ---
 
@@ -33,6 +33,7 @@
 | Step 19 | _Sub64/_Subc64 で全三項演算子削除（+1.8%）| ✅ 完了 🔥🔥🔥 |
 | Step 20 | _Add320 で _Reduce512 最適化（+3.4%、5B突破！）| ✅ 完了 🔥🔥🔥 |
 | Step 21 | _Sub256 で _Reduce512 減算最適化（+2.4%）| ✅ 完了 🔥🔥🔥 |
+| Step 22 | _Add256Plus128 で _ReduceOverflow 最適化（+1.3%）| ✅ 完了 🔥 |
 
 ---
 
@@ -71,11 +72,12 @@
 | GPU + _Add64x3 で _ModMult/_ModSquare 最適化 | 4.841B keys/sec | 69,157x |
 | GPU + _Sub64/_Subc64 で全三項演算子削除 | 4.928B keys/sec | 70,400x |
 | GPU + _Add320 で _Reduce512 最適化 | 5.098B keys/sec | 72,835x |
-| **GPU + _Sub256 で _Reduce512 減算最適化** | **5.219B keys/sec** | **74,553x** 🔥🔥🔥 |
+| GPU + _Sub256 で _Reduce512 減算最適化 | 5.219B keys/sec | 74,553x |
+| **GPU + _Add256Plus128 で _ReduceOverflow 最適化** | **5.287B keys/sec** | **75,529x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 **CPU 使用率が 100% → 1% に削減！電力消費大幅削減！** 💡
-**32 prefix 時：4.899B keys/sec** 💪
+**32 prefix 時：4.975B keys/sec** 💪
 
 ---
 
