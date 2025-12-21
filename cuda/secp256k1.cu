@@ -345,41 +345,6 @@ __device__ void _Mult64(uint64_t a, uint64_t b, uint64_t* low, uint64_t* high)
 }
 
 /**
- * 128-bit × 128-bit = 256-bit multiplication (schoolbook).
- * 4 multiplications of 64-bit × 64-bit.
- */
-__device__ void _Mult128(const uint64_t a[2], const uint64_t b[2], uint64_t result[4])
-{
-    uint64_t temp[4] = {0};
-
-    // Schoolbook multiplication
-    for (int i = 0; i < 2; i++) {
-        uint64_t carry = 0;
-        for (int j = 0; j < 2; j++) {
-            uint64_t lo, hi;
-            _Mult64(a[i], b[j], &lo, &hi);
-
-            // Add lo to temp[i+j]
-            uint64_t s1 = temp[i + j] + lo;
-            uint32_t c1 = (s1 < temp[i + j]) ? 1 : 0;
-
-            // Add carry
-            uint64_t s2 = s1 + carry;
-            uint32_t c2 = (s2 < s1) ? 1 : 0;
-
-            temp[i + j] = s2;
-            carry = hi + c1 + c2;
-        }
-        temp[i + 2] += carry;
-    }
-
-    result[0] = temp[0];
-    result[1] = temp[1];
-    result[2] = temp[2];
-    result[3] = temp[3];
-}
-
-/**
  * Reduce the 5th limb of a 320-bit number: sum[4] * 2^256 mod p = sum[4] * (2^32 + 977)
  * Adds the result back to sum[0..4], avoiding billions of iterations in a naive reduction loop.
  *
@@ -558,66 +523,31 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
 
 /**
  * Modular multiplication: (a * b) mod p
- * Uses Karatsuba-based _Mult128 for 256-bit × 256-bit multiplication.
- * Reduces 64-bit multiplications from 16 to 12 (4 × 3).
+ * Uses secp256k1-specific reduction
  */
 __device__ void _ModMult(const uint64_t a[4], const uint64_t b[4], uint64_t result[4])
 {
     uint64_t temp[8] = {0};  // 512-bit result
 
-    // Split 256-bit into two 128-bit halves
-    // a = a_hi * 2^128 + a_lo, b = b_hi * 2^128 + b_lo
-    const uint64_t* a_lo = &a[0];  // {a[0], a[1]}
-    const uint64_t* a_hi = &a[2];  // {a[2], a[3]}
-    const uint64_t* b_lo = &b[0];  // {b[0], b[1]}
-    const uint64_t* b_hi = &b[2];  // {b[2], b[3]}
+    // Multiply a * b (256-bit × 256-bit = 512-bit)
+    for (int i = 0; i < 4; i++) {
+        uint64_t carry = 0;
+        for (int j = 0; j < 4; j++) {
+            uint64_t low, high;
+            _Mult64(a[i], b[j], &low, &high);
 
-    uint64_t prod[4];
+            // Add to temp[i+j] with proper carry detection (two-stage)
+            uint64_t s1 = temp[i + j] + low;
+            uint64_t carry1 = (s1 < temp[i + j]) ? 1 : 0;
 
-    // temp[0..3] = a_lo * b_lo
-    _Mult128(a_lo, b_lo, prod);
-    temp[0] = prod[0];
-    temp[1] = prod[1];
-    temp[2] = prod[2];
-    temp[3] = prod[3];
+            uint64_t s2 = s1 + carry;
+            uint64_t carry2 = (s2 < s1) ? 1 : 0;
 
-    // Helper macro for adding with carry (two-stage)
-    #define ADD_WITH_CARRY(dst, val, c) do { \
-        uint64_t _t1 = (dst) + (val); \
-        uint32_t _c1 = (_t1 < (dst)) ? 1 : 0; \
-        uint64_t _t2 = _t1 + (c); \
-        uint32_t _c2 = (_t2 < _t1) ? 1 : 0; \
-        (dst) = _t2; \
-        (c) = _c1 | _c2; \
-    } while(0)
-
-    // temp[2..5] += a_lo * b_hi
-    _Mult128(a_lo, b_hi, prod);
-    uint64_t carry = 0;
-    ADD_WITH_CARRY(temp[2], prod[0], carry);
-    ADD_WITH_CARRY(temp[3], prod[1], carry);
-    ADD_WITH_CARRY(temp[4], prod[2], carry);
-    ADD_WITH_CARRY(temp[5], prod[3], carry);
-    temp[6] += carry;
-
-    // temp[2..5] += a_hi * b_lo
-    _Mult128(a_hi, b_lo, prod);
-    carry = 0;
-    ADD_WITH_CARRY(temp[2], prod[0], carry);
-    ADD_WITH_CARRY(temp[3], prod[1], carry);
-    ADD_WITH_CARRY(temp[4], prod[2], carry);
-    ADD_WITH_CARRY(temp[5], prod[3], carry);
-    temp[6] += carry;
-
-    // temp[4..7] += a_hi * b_hi
-    _Mult128(a_hi, b_hi, prod);
-    carry = 0;
-    ADD_WITH_CARRY(temp[4], prod[0], carry);
-    ADD_WITH_CARRY(temp[5], prod[1], carry);
-    ADD_WITH_CARRY(temp[6], prod[2], carry);
-    temp[7] = prod[3] + carry;
-
-    #undef ADD_WITH_CARRY
+            temp[i + j] = s2;
+            carry = high + carry1 + carry2;
+        }
+        temp[i + 4] += carry;
+    }
 
     // Reduce modulo p
     _Reduce512(temp, result);
