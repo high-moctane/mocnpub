@@ -259,11 +259,14 @@
 | GPU + _ReduceOverflow も PTX 化 | 4.655B keys/sec | 66,500x |
 | GPU + 即値化関数削除（命令キャッシュ効率向上） | 4.681B keys/sec | 66,871x |
 | GPU + _Add64x3 で _ModMult/_ModSquare 最適化 | 4.841B keys/sec | 69,157x |
-| **GPU + _Sub64/_Subc64 で全三項演算子削除** | **4.928B keys/sec** | **70,400x** 🔥🔥🔥 |
+| GPU + _Sub64/_Subc64 で全三項演算子削除 | 4.928B keys/sec | 70,400x |
+| **GPU + _Add320 で _Reduce512 最適化** | **5.098B keys/sec** | **72,835x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 
-**32 prefix 時：4.653B keys/sec** 💪
+**5B の大台突破！** 🚀
+
+**32 prefix 時：4.799B keys/sec** 💪
 
 ---
 
@@ -297,6 +300,7 @@
 | **_Add64/_Addc64 で _Reduce512 最適化** | **+5.1%**（PTX carry chain で carry 検出を置き換え） 🔥🔥🔥 | ✅ 完了 |
 | **_Add64x3 で _ModMult/_ModSquare 最適化** | **+3.4%**（3値加算を6 PTX命令で実行、三項演算子のストール回避） 🔥🔥🔥 | ✅ 完了 |
 | **_Sub64/_Subc64 で全三項演算子削除** | **+1.8%**（_Reduce512 borrow処理、秘密鍵加算、_Sub256 borrow変換） 🔥🔥🔥 | ✅ 完了 |
+| **_Add320 で _Reduce512 最適化** | **+3.4%**（5 limbs 加算を 11 PTX 命令で実行、carry のレジスタ往復を削減） 🔥🔥🔥 | ✅ 完了 |
 
 #### エンドモルフィズムの仕組み
 
