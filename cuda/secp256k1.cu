@@ -175,6 +175,63 @@ __device__ uint32_t _Add64x3(uint64_t a, uint64_t b, uint64_t c, uint64_t* sum)
     return carry_out;  // 0, 1, or 2
 }
 
+/**
+ * Subtract two 64-bit numbers (a - b)
+ * Returns borrow-out (0 or 1)
+ *
+ * Uses PTX 32-bit borrow chain for efficiency.
+ */
+__device__ uint32_t _Sub64(uint64_t a, uint64_t b, uint64_t* diff)
+{
+    uint32_t a0 = (uint32_t)a;
+    uint32_t a1 = (uint32_t)(a >> 32);
+    uint32_t b0 = (uint32_t)b;
+    uint32_t b1 = (uint32_t)(b >> 32);
+    uint32_t r0, r1, borrow;
+
+    asm volatile (
+        "sub.cc.u32  %0, %3, %5;\n\t"   // r0 = a0 - b0, borrow out
+        "subc.cc.u32 %1, %4, %6;\n\t"   // r1 = a1 - b1 - borrow, borrow out
+        "subc.u32    %2, 0, 0;\n\t"     // borrow = 0 - 0 - borrow = -borrow (0 or 0xFFFFFFFF)
+        : "=r"(r0), "=r"(r1), "=r"(borrow)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1)
+    );
+
+    *diff = ((uint64_t)r1 << 32) | r0;
+    return borrow & 1;  // Convert 0xFFFFFFFF to 1
+}
+
+/**
+ * Subtract two 64-bit numbers with borrow-in (a - b - borrow_in)
+ * Returns borrow-out (0 or 1)
+ *
+ * Uses PTX 32-bit borrow chain for efficiency.
+ */
+__device__ uint32_t _Subc64(uint64_t a, uint64_t b, uint32_t borrow_in, uint64_t* diff)
+{
+    uint32_t a0 = (uint32_t)a;
+    uint32_t a1 = (uint32_t)(a >> 32);
+    uint32_t b0 = (uint32_t)b;
+    uint32_t b1 = (uint32_t)(b >> 32);
+    uint32_t r0, r1, borrow_out;
+
+    asm volatile (
+        // First: a - b
+        "sub.cc.u32  %0, %3, %5;\n\t"   // r0 = a0 - b0
+        "subc.cc.u32 %1, %4, %6;\n\t"   // r1 = a1 - b1 - borrow
+        "subc.u32    %2, 0, 0;\n\t"     // borrow_out = -borrow (from a - b)
+        // Second: - borrow_in
+        "sub.cc.u32  %0, %0, %7;\n\t"   // r0 = r0 - borrow_in
+        "subc.cc.u32 %1, %1, 0;\n\t"    // r1 = r1 - borrow
+        "subc.u32    %2, %2, 0;\n\t"    // borrow_out = borrow_out - borrow
+        : "=r"(r0), "=r"(r1), "=r"(borrow_out)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(borrow_in)
+    );
+
+    *diff = ((uint64_t)r1 << 32) | r0;
+    return borrow_out & 1;  // Convert to 0 or 1
+}
+
 // ============================================================================
 // 256-bit Arithmetic Helper Functions (Device Functions)
 // ============================================================================
@@ -301,7 +358,7 @@ __device__ void _Sub256(const uint64_t a[4], const uint64_t b[4], uint64_t resul
     result[2] = ((uint64_t)r5 << 32) | r4;
     result[3] = ((uint64_t)r7 << 32) | r6;
     // subc.u32 0, 0 with borrow gives 0xFFFFFFFF if borrow, 0 otherwise
-    *borrow_out = borrow ? 1 : 0;
+    *borrow_out = borrow & 1;  // Convert 0xFFFFFFFF to 1
 }
 
 /**
@@ -510,44 +567,11 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
         }
 
         if (ge) {
-            // Subtract p from temp (320-bit - 256-bit) - unrolled
-            uint64_t borrow = 0;
-
-            // i = 0
-            uint64_t temp_diff0 = temp[0] - P0;
-            uint64_t borrow1_0 = (temp[0] < P0) ? 1 : 0;
-            uint64_t final_diff0 = temp_diff0 - borrow;
-            uint64_t borrow2_0 = (temp_diff0 < borrow) ? 1 : 0;
-            temp[0] = final_diff0;
-            borrow = borrow1_0 | borrow2_0;
-
-            // i = 1, 2, 3: P1 = P2 = P3 = P123 (max_uint64)
-            // temp[i] - P123 always underflows unless temp[i] == P123
-            // So borrow1 = (temp[i] < P123) ? 1 : 0 = (temp[i] != P123) ? 1 : 0
-            uint64_t temp_diff1 = temp[1] - P123;
-            uint64_t borrow1_1 = (temp[1] < P123) ? 1 : 0;
-            uint64_t final_diff1 = temp_diff1 - borrow;
-            uint64_t borrow2_1 = (temp_diff1 < borrow) ? 1 : 0;
-            temp[1] = final_diff1;
-            borrow = borrow1_1 | borrow2_1;
-
-            // i = 2
-            uint64_t temp_diff2 = temp[2] - P123;
-            uint64_t borrow1_2 = (temp[2] < P123) ? 1 : 0;
-            uint64_t final_diff2 = temp_diff2 - borrow;
-            uint64_t borrow2_2 = (temp_diff2 < borrow) ? 1 : 0;
-            temp[2] = final_diff2;
-            borrow = borrow1_2 | borrow2_2;
-
-            // i = 3
-            uint64_t temp_diff3 = temp[3] - P123;
-            uint64_t borrow1_3 = (temp[3] < P123) ? 1 : 0;
-            uint64_t final_diff3 = temp_diff3 - borrow;
-            uint64_t borrow2_3 = (temp_diff3 < borrow) ? 1 : 0;
-            temp[3] = final_diff3;
-            borrow = borrow1_3 | borrow2_3;
-
-            // Subtract borrow from temp[4]
+            // Subtract p from temp using PTX borrow chain
+            uint32_t borrow = _Sub64(temp[0], P0, &temp[0]);
+            borrow = _Subc64(temp[1], P123, borrow, &temp[1]);
+            borrow = _Subc64(temp[2], P123, borrow, &temp[2]);
+            borrow = _Subc64(temp[3], P123, borrow, &temp[3]);
             temp[4] -= borrow;
         } else {
             break;
@@ -1232,16 +1256,11 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     uint64_t global_offset = (uint64_t)idx * MAX_KEYS_PER_THREAD;
     uint64_t k[4];
 
-    // Add global_offset to base_key (with carry propagation)
-    uint64_t sum = base_key[0] + global_offset;
-    uint64_t carry = (sum < base_key[0]) ? 1 : 0;
-    k[0] = sum;
-
-    for (int i = 1; i < 4; i++) {
-        sum = base_key[i] + carry;
-        carry = (sum < carry) ? 1 : 0;
-        k[i] = sum;
-    }
+    // Add global_offset to base_key using PTX carry chain
+    uint32_t carry = _Add64(base_key[0], global_offset, &k[0]);
+    carry = _Addc64(base_key[1], 0, carry, &k[1]);
+    carry = _Addc64(base_key[2], 0, carry, &k[2]);
+    _Addc64(base_key[3], 0, carry, &k[3]);
 
     // Save starting key for this thread (needed for match reporting)
     uint64_t thread_base_key[4];
@@ -1364,18 +1383,12 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
                         matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
                     }
 
-                    // Compute actual secret key: thread_base_key + i
-                    // (with carry propagation)
+                    // Compute actual secret key using PTX carry chain
                     uint64_t actual_key[4];
-                    uint64_t key_sum = thread_base_key[0] + (uint64_t)i;
-                    uint64_t key_carry = (key_sum < thread_base_key[0]) ? 1 : 0;
-                    actual_key[0] = key_sum;
-
-                    for (int j = 1; j < 4; j++) {
-                        key_sum = thread_base_key[j] + key_carry;
-                        key_carry = (key_sum < key_carry) ? 1 : 0;
-                        actual_key[j] = key_sum;
-                    }
+                    uint32_t key_carry = _Add64(thread_base_key[0], (uint64_t)i, &actual_key[0]);
+                    key_carry = _Addc64(thread_base_key[1], 0, key_carry, &actual_key[1]);
+                    key_carry = _Addc64(thread_base_key[2], 0, key_carry, &actual_key[2]);
+                    _Addc64(thread_base_key[3], 0, key_carry, &actual_key[3]);
 
                     for (int j = 0; j < 4; j++) {
                         matched_secret_keys[slot * 4 + j] = actual_key[j];
