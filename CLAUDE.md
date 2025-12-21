@@ -256,11 +256,12 @@
 | GPU + Addition Chain（_ModInv 乗算 128→14） | 4.199B keys/sec | 59,991x |
 | GPU + インライン PTX（_Add256/_Sub256 carry chain） | 4.313B keys/sec | 61,614x |
 | GPU + _Add64/_Addc64 で _Reduce512 最適化 | 4.532B keys/sec | 64,743x |
-| **GPU + _ReduceOverflow も PTX 化** | **4.655B keys/sec** | **66,500x** 🔥🔥🔥 |
+| GPU + _ReduceOverflow も PTX 化 | 4.655B keys/sec | 66,500x |
+| **GPU + 即値化関数削除（命令キャッシュ効率向上）** | **4.681B keys/sec** | **66,871x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 
-**32 prefix 時：4.412B keys/sec** 💪
+**32 prefix 時：4.423B keys/sec** 💪
 
 ---
 
@@ -397,6 +398,7 @@ cmd.arg(format!("-D MAX_KEYS_PER_THREAD={}", max_keys));
 | **`_PointAdd` 重複計算最適化** | `_PointMult` 内でのみ使用（全体の約 8%）、レジスタ 128/128 でスピルリスク高、効果 0.1% 未満 |
 | **Bloom Filter プレフィルタリング** | GPU の SIMT アーキテクチャと相性が悪い。1 スレッド 3.1% ヒット率でも、warp（32 スレッド）単位では 63% がヒット → オーバーヘッドが増えただけ（4.13B → 4.09B、-1%）。実用的にするには 10,000 bit 以上のビットマップが必要 |
 | ~~_P を #define 化~~ | **実装済み（2025-12-20）**: P, G, Beta, Beta2 を全て #define 化。速度影響なし。コードがクリーンになり、PTX に即値埋め込み |
+| ~~即値化特殊関数~~ | **逆効果と判明（2025-12-21）**: `_ModMultByBeta` 等の即値版を削除したら +0.6% 高速化。命令キャッシュ効率が向上（同じ `_ModMult` を連打するほうが L1 に優しい） |
 
 #### レジスタ削減の実験（2025-11-29）
 

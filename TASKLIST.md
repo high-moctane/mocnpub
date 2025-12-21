@@ -2,7 +2,7 @@
 
 **作成日**: 2025-11-14
 **最終更新**: 2025-12-21
-**進捗**: Step 0〜16 完了！🎉 _ReduceOverflow も PTX 化で 4.655B keys/sec 達成！🔥🔥🔥
+**進捗**: Step 0〜17 完了！🎉 即値化関数削除で 4.681B keys/sec 達成！🔥🔥🔥
 
 ---
 
@@ -28,6 +28,7 @@
 | Step 14 | インライン PTX（_Add256/_Sub256、+2.7%）| ✅ 完了 🔥🔥🔥 |
 | Step 15 | _Add64/_Addc64 で _Reduce512 最適化（+5.1%）| ✅ 完了 🔥🔥🔥 |
 | Step 16 | _ReduceOverflow も PTX 化（+2.7%）| ✅ 完了 🔥🔥🔥 |
+| Step 17 | 即値化関数削除（-119行、+0.6%）| ✅ 完了 🔥 |
 
 ---
 
@@ -61,11 +62,12 @@
 | GPU + Addition Chain（_ModInv 乗算 128→14） | 4.199B keys/sec | 59,991x |
 | GPU + インライン PTX（_Add256/_Sub256 carry chain） | 4.313B keys/sec | 61,614x |
 | GPU + _Add64/_Addc64 で _Reduce512 最適化 | 4.532B keys/sec | 64,743x |
-| **GPU + _ReduceOverflow も PTX 化** | **4.655B keys/sec** | **66,500x** 🔥🔥🔥 |
+| GPU + _ReduceOverflow も PTX 化 | 4.655B keys/sec | 66,500x |
+| **GPU + 即値化関数削除（命令キャッシュ効率向上）** | **4.681B keys/sec** | **66,871x** 🔥🔥🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 **CPU 使用率が 100% → 1% に削減！電力消費大幅削減！** 💡
-**32 prefix 時：4.412B keys/sec** 💪
+**32 prefix 時：4.423B keys/sec** 💪
 
 ---
 
@@ -846,6 +848,59 @@ sum[4] = c2;
 1. `_Addcc64`（3 値加算用）：`a + b + c` を効率的に計算
 2. `_Addc64` の命令数削減：6 命令 → 4 命令
 3. `_Sub64`/`_Subc64` を作成して borrow 検出を最適化
+
+---
+
+## ✅ Step 17: 即値化関数削除（2025-12-21 完了）🔥
+
+### 背景
+
+- `_ModMultByBeta`, `_ModMultByBeta2`, `_PointAddMixedG` は即値（#define）を使った特殊化版
+- 以前のベンチマークで、即値化しても速度変化なしだった
+- Karatsuba 実験に向けて `_ModMult` を 1 つに統一したい
+
+### 実装内容
+
+**削除した関数**：
+- `_ModMultByBeta`（29行）→ `_ModMult(x, beta, result)` に置換
+- `_ModMultByBeta2`（29行）→ `_ModMult(x, beta2, result)` に置換
+- `_PointAddMixedG`（62行）→ `_PointAddMixed(..., Gx, Gy, ...)` に置換
+
+**コード削減**：-126行、+7行 = **-119行**
+
+### 結果 🎉
+
+| ケース | Before | After | 変化 |
+|--------|--------|-------|------|
+| **1 prefix** | 4.655B | **4.681B** | **+0.6%** 🔥 |
+| **32 prefix** | 4.412B | **4.423B** | **+0.2%** 🔥 |
+
+**CPU 比 66,871 倍！** 🚀
+
+### 学び 💡
+
+- **命令キャッシュ効率**：同じ `_ModMult` を連打するほうが L1 命令キャッシュに優しい
+- **コード整理で速くなることもある**：予想に反して +0.6% 改善
+- **キャッシュ階層の理解**：
+  - constant cache < #define 即値 < _ModMult 一本化（命令キャッシュ効率）
+
+### 今後の展望：Karatsuba 法 🔮
+
+**目標**：`_ModMult` の乗算回数を削減（16回 → 9回）
+
+**階層構造**：
+```
+_Mult64   ← GPU/コンパイラが既に最適化してるかも（内部 32-bit）
+   ↓
+_Mult128  ← ここからカラツバ化の効果が出そう
+   ↓
+_Mult256  ← _Mult128 を呼ぶ or _ModMult にべた書き
+```
+
+**段階的アプローチ**：
+1. まず `_Mult128` を Karatsuba 化
+2. 効果を測定
+3. 良ければ `_Mult256` も
 
 ---
 
