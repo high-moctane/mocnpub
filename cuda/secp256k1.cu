@@ -106,6 +106,68 @@ __device__ uint32_t _Add64(uint64_t a, uint64_t b, uint64_t* sum)
 }
 
 /**
+ * Add two 320-bit numbers (5 limbs each)
+ * Returns carry-out (0 or 1)
+ *
+ * Uses PTX 32-bit carry chain for efficiency.
+ * Replaces _Add64 + _Addc64 x 4 pattern (27 PTX instructions → 11 instructions).
+ */
+__device__ uint32_t _Add320(const uint64_t a[5], const uint64_t b[5], uint64_t sum[5])
+{
+    uint32_t a0 = (uint32_t)a[0];
+    uint32_t a1 = (uint32_t)(a[0] >> 32);
+    uint32_t a2 = (uint32_t)a[1];
+    uint32_t a3 = (uint32_t)(a[1] >> 32);
+    uint32_t a4 = (uint32_t)a[2];
+    uint32_t a5 = (uint32_t)(a[2] >> 32);
+    uint32_t a6 = (uint32_t)a[3];
+    uint32_t a7 = (uint32_t)(a[3] >> 32);
+    uint32_t a8 = (uint32_t)a[4];
+    uint32_t a9 = (uint32_t)(a[4] >> 32);
+
+    uint32_t b0 = (uint32_t)b[0];
+    uint32_t b1 = (uint32_t)(b[0] >> 32);
+    uint32_t b2 = (uint32_t)b[1];
+    uint32_t b3 = (uint32_t)(b[1] >> 32);
+    uint32_t b4 = (uint32_t)b[2];
+    uint32_t b5 = (uint32_t)(b[2] >> 32);
+    uint32_t b6 = (uint32_t)b[3];
+    uint32_t b7 = (uint32_t)(b[3] >> 32);
+    uint32_t b8 = (uint32_t)b[4];
+    uint32_t b9 = (uint32_t)(b[4] >> 32);
+
+    uint32_t r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, carry;
+
+    asm volatile (
+        "add.cc.u32   %0, %11, %21;\n\t"   // r0 = a0 + b0
+        "addc.cc.u32  %1, %12, %22;\n\t"   // r1 = a1 + b1 + carry
+        "addc.cc.u32  %2, %13, %23;\n\t"   // r2 = a2 + b2 + carry
+        "addc.cc.u32  %3, %14, %24;\n\t"   // r3 = a3 + b3 + carry
+        "addc.cc.u32  %4, %15, %25;\n\t"   // r4 = a4 + b4 + carry
+        "addc.cc.u32  %5, %16, %26;\n\t"   // r5 = a5 + b5 + carry
+        "addc.cc.u32  %6, %17, %27;\n\t"   // r6 = a6 + b6 + carry
+        "addc.cc.u32  %7, %18, %28;\n\t"   // r7 = a7 + b7 + carry
+        "addc.cc.u32  %8, %19, %29;\n\t"   // r8 = a8 + b8 + carry
+        "addc.cc.u32  %9, %20, %30;\n\t"   // r9 = a9 + b9 + carry
+        "addc.u32     %10, 0, 0;\n\t"      // carry = 0 + 0 + carry
+        : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3), "=r"(r4),
+          "=r"(r5), "=r"(r6), "=r"(r7), "=r"(r8), "=r"(r9), "=r"(carry)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(a4),
+          "r"(a5), "r"(a6), "r"(a7), "r"(a8), "r"(a9),
+          "r"(b0), "r"(b1), "r"(b2), "r"(b3), "r"(b4),
+          "r"(b5), "r"(b6), "r"(b7), "r"(b8), "r"(b9)
+    );
+
+    sum[0] = ((uint64_t)r1 << 32) | r0;
+    sum[1] = ((uint64_t)r3 << 32) | r2;
+    sum[2] = ((uint64_t)r5 << 32) | r4;
+    sum[3] = ((uint64_t)r7 << 32) | r6;
+    sum[4] = ((uint64_t)r9 << 32) | r8;
+
+    return carry;
+}
+
+/**
  * Add two 64-bit numbers with carry-in (a + b + carry_in)
  * Returns carry-out (0 or 1)
  *
@@ -520,12 +582,9 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     }
     mult977[4] = carry;
 
-    // Add: shifted + mult977 (using PTX carry chain)
+    // Add: shifted + mult977 (using PTX carry chain, 11 instructions)
     uint64_t sum[5];
-    uint32_t c = _Add64(shifted[0], mult977[0], &sum[0]);
-    for (int i = 1; i < 5; i++) {
-        c = _Addc64(shifted[i], mult977[i], c, &sum[i]);
-    }
+    _Add320(shifted, mult977, sum);
 
     // Reduce sum[4]: sum[4] * 2^256 mod p = sum[4] * (2^32 + 977)
     _ReduceOverflow(sum);
@@ -538,11 +597,8 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     temp[3] = low[3];
     temp[4] = 0;
 
-    // Add: temp + sum (using PTX carry chain)
-    c = _Add64(temp[0], sum[0], &temp[0]);
-    for (int i = 1; i < 5; i++) {
-        c = _Addc64(temp[i], sum[i], c, &temp[i]);
-    }
+    // Add: temp + sum (using PTX carry chain, 11 instructions)
+    _Add320(temp, sum, temp);
 
     // Now reduce: while temp >= p, subtract p
     // At most 2-3 iterations needed
