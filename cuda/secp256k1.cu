@@ -258,6 +258,88 @@ __device__ uint32_t _Add128(uint64_t a[2], uint64_t b0, uint64_t b1)
 }
 
 /**
+ * Add two 128-bit numbers, store result in separate output
+ * (a0, a1) + (b0, b1) → (result[0], result[1])
+ * Returns carry-out (0 or 1)
+ *
+ * Uses PTX 32-bit carry chain for efficiency.
+ * Used in _ReduceOverflow for (shifted + mult) calculation.
+ */
+__device__ uint32_t _Add128To(uint64_t a0, uint64_t a1, uint64_t b0, uint64_t b1, uint64_t result[2])
+{
+    uint32_t a0_lo = (uint32_t)a0;
+    uint32_t a0_hi = (uint32_t)(a0 >> 32);
+    uint32_t a1_lo = (uint32_t)a1;
+    uint32_t a1_hi = (uint32_t)(a1 >> 32);
+
+    uint32_t b0_lo = (uint32_t)b0;
+    uint32_t b0_hi = (uint32_t)(b0 >> 32);
+    uint32_t b1_lo = (uint32_t)b1;
+    uint32_t b1_hi = (uint32_t)(b1 >> 32);
+
+    uint32_t r0, r1, r2, r3, carry;
+
+    asm volatile (
+        "add.cc.u32   %0, %5, %9;\n\t"    // r0 = a0_lo + b0_lo
+        "addc.cc.u32  %1, %6, %10;\n\t"   // r1 = a0_hi + b0_hi + carry
+        "addc.cc.u32  %2, %7, %11;\n\t"   // r2 = a1_lo + b1_lo + carry
+        "addc.cc.u32  %3, %8, %12;\n\t"   // r3 = a1_hi + b1_hi + carry
+        "addc.u32     %4, 0, 0;\n\t"      // carry = 0 + 0 + carry
+        : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3), "=r"(carry)
+        : "r"(a0_lo), "r"(a0_hi), "r"(a1_lo), "r"(a1_hi),
+          "r"(b0_lo), "r"(b0_hi), "r"(b1_lo), "r"(b1_hi)
+    );
+
+    result[0] = ((uint64_t)r1 << 32) | r0;
+    result[1] = ((uint64_t)r3 << 32) | r2;
+
+    return carry;
+}
+
+/**
+ * Add uint64 scalar to uint256, propagate carry through all limbs
+ * result[0..3] = base[0..3] + scalar
+ *
+ * Uses PTX 32-bit carry chain for efficiency.
+ * Used for secret key calculation: base_key + offset.
+ */
+__device__ void _PropagateCarry256(const uint64_t base[4], uint64_t scalar, uint64_t result[4])
+{
+    uint32_t b0 = (uint32_t)base[0];
+    uint32_t b1 = (uint32_t)(base[0] >> 32);
+    uint32_t b2 = (uint32_t)base[1];
+    uint32_t b3 = (uint32_t)(base[1] >> 32);
+    uint32_t b4 = (uint32_t)base[2];
+    uint32_t b5 = (uint32_t)(base[2] >> 32);
+    uint32_t b6 = (uint32_t)base[3];
+    uint32_t b7 = (uint32_t)(base[3] >> 32);
+
+    uint32_t s0 = (uint32_t)scalar;
+    uint32_t s1 = (uint32_t)(scalar >> 32);
+
+    uint32_t r0, r1, r2, r3, r4, r5, r6, r7;
+
+    asm volatile (
+        "add.cc.u32   %0, %8, %16;\n\t"   // r0 = b0 + s0
+        "addc.cc.u32  %1, %9, %17;\n\t"   // r1 = b1 + s1 + carry
+        "addc.cc.u32  %2, %10, 0;\n\t"    // r2 = b2 + 0 + carry
+        "addc.cc.u32  %3, %11, 0;\n\t"    // r3 = b3 + 0 + carry
+        "addc.cc.u32  %4, %12, 0;\n\t"    // r4 = b4 + 0 + carry
+        "addc.cc.u32  %5, %13, 0;\n\t"    // r5 = b5 + 0 + carry
+        "addc.cc.u32  %6, %14, 0;\n\t"    // r6 = b6 + 0 + carry
+        "addc.u32     %7, %15, 0;\n\t"    // r7 = b7 + 0 + carry
+        : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3), "=r"(r4), "=r"(r5), "=r"(r6), "=r"(r7)
+        : "r"(b0), "r"(b1), "r"(b2), "r"(b3), "r"(b4), "r"(b5), "r"(b6), "r"(b7),
+          "r"(s0), "r"(s1)
+    );
+
+    result[0] = ((uint64_t)r1 << 32) | r0;
+    result[1] = ((uint64_t)r3 << 32) | r2;
+    result[2] = ((uint64_t)r5 << 32) | r4;
+    result[3] = ((uint64_t)r7 << 32) | r6;
+}
+
+/**
  * Add 512-bit numbers in-place
  * a[0..7] += b[0..7]
  *
@@ -685,13 +767,12 @@ __device__ void _ReduceOverflow(uint64_t sum[5])
 
     // Compute (shifted + mult) = factor * (2^32 + 977)
     // Result is at most 97-bit (64-bit factor * 33-bit constant)
-    uint64_t add0, add1;
-    uint32_t c = _Add64(shifted_low, mult_low, &add0);
-    c = _Addc64(shifted_high, mult_high, c, &add1);
-    // c is carry from add1 (0 or 1, represents bit 128)
+    uint64_t add[2];
+    uint32_t c = _Add128To(shifted_low, shifted_high, mult_low, mult_high, add);
+    // c is carry from add[1] (0 or 1, represents bit 128)
 
-    // Add (add0, add1, c, 0) to sum[0..3] using single PTX call (9 instructions)
-    sum[4] = _Add256Plus128(sum, add0, add1, c);
+    // Add (add[0], add[1], c, 0) to sum[0..3] using single PTX call (9 instructions)
+    sum[4] = _Add256Plus128(sum, add[0], add[1], c);
 }
 
 /**
@@ -1462,11 +1543,8 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     uint64_t global_offset = (uint64_t)idx * MAX_KEYS_PER_THREAD;
     uint64_t k[4];
 
-    // Add global_offset to base_key using PTX carry chain
-    uint32_t carry = _Add64(base_key[0], global_offset, &k[0]);
-    carry = _Addc64(base_key[1], 0, carry, &k[1]);
-    carry = _Addc64(base_key[2], 0, carry, &k[2]);
-    _Addc64(base_key[3], 0, carry, &k[3]);
+    // Add global_offset to base_key: k = base_key + global_offset
+    _PropagateCarry256(base_key, global_offset, k);
 
     // Save starting key for this thread (needed for match reporting)
     uint64_t thread_base_key[4];
@@ -1589,12 +1667,9 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
                         matched_pubkeys_x[slot * 4 + j] = x_coords[endo][j];
                     }
 
-                    // Compute actual secret key using PTX carry chain
+                    // Compute actual secret key: actual_key = thread_base_key + i
                     uint64_t actual_key[4];
-                    uint32_t key_carry = _Add64(thread_base_key[0], (uint64_t)i, &actual_key[0]);
-                    key_carry = _Addc64(thread_base_key[1], 0, key_carry, &actual_key[1]);
-                    key_carry = _Addc64(thread_base_key[2], 0, key_carry, &actual_key[2]);
-                    _Addc64(thread_base_key[3], 0, key_carry, &actual_key[3]);
+                    _PropagateCarry256(thread_base_key, (uint64_t)i, actual_key);
 
                     for (int j = 0; j < 4; j++) {
                         matched_secret_keys[slot * 4 + j] = actual_key[j];
