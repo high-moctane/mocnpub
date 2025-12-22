@@ -819,35 +819,14 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
 
     // Now reduce: while temp >= p, subtract p
     // At most 2-3 iterations needed
-    // Using #define constants for P (P1=P2=P3=P123=max_uint64)
-    for (int iter = 0; iter < 3; iter++) {
-        // Check if temp >= p
-        // Since P1=P2=P3=P123=max_uint64, comparison is simplified:
-        // - If any of temp[3,2,1] < max_uint64, then temp < p
-        // - Otherwise check temp[0] >= P0
-        bool ge = false;
-        if (temp[4] > 0) {
-            ge = true;
-        } else if (temp[3] < P123) {
-            ge = false;
-        } else if (temp[2] < P123) {
-            ge = false;
-        } else if (temp[1] < P123) {
-            ge = false;
-        } else {
-            // temp[3]=temp[2]=temp[1]=P123 (max_uint64), check temp[0] vs P0
-            ge = temp[0] >= P0;
-        }
-
-        if (ge) {
-            // Subtract p from temp using PTX borrow chain (single _Sub256 call)
-            uint64_t p[4] = {P0, P123, P123, P123};
-            uint64_t borrow64;
-            _Sub256(temp, p, temp, &borrow64);
-            temp[4] -= borrow64;
-        } else {
-            break;
-        }
+    // temp >= p iff: temp[4] > 0, OR (temp[3..1] all == max_uint64 AND temp[0] >= P0)
+    while ((temp[4] > 0) ||
+           (temp[3] == P123 && temp[2] == P123 && temp[1] == P123 && temp[0] >= P0)) {
+        // Subtract p from temp using PTX borrow chain (single _Sub256 call)
+        uint64_t p[4] = {P0, P123, P123, P123};
+        uint64_t borrow64;
+        _Sub256(temp, p, temp, &borrow64);
+        temp[4] -= !!borrow64;
     }
 
     // Copy result
