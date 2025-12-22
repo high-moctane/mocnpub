@@ -267,11 +267,12 @@
 | GPU + _Add128To/_PropagateCarry256 リファクタ | 5.395B keys/sec | 77,071x |
 | GPU + ループ融合（Montgomery's Trick 累積積） | 5.499B keys/sec | 78,557x |
 | GPU + _ReduceOverflow インライン化（分岐削除） | 5.590B keys/sec | 79,857x |
-| **GPU + _Reduce512 while ループ簡素化** | **5.707B keys/sec** | **81,529x** 🔥 |
+| GPU + _Reduce512 while ループ簡素化 | 5.707B keys/sec | 81,529x |
+| **GPU + 三項演算子完全削除 + ブランチレス prefix matching** | **5.706B keys/sec** | **81,514x** 🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 
-**32 prefix 時：5.386B keys/sec** 💪
+**32 prefix 時：5.457B keys/sec**（+1.3%）💪
 
 ---
 
@@ -313,6 +314,8 @@
 | **ループ融合（Montgomery's Trick 累積積）** | **+1.9%**（Phase 1 と Phase 2 を統合、メモリアクセス局所性向上、PM Sampling の山がなだらかに） 🔥🔥🔥 | ✅ 完了 |
 | **_ReduceOverflow インライン化** | **+1.7%**（関数呼び出し削除、if 分岐削除、sum[4]==0 は稀なので常に実行） 🔥🔥🔥 | ✅ 完了 |
 | **_Reduce512 while ループ簡素化** | **+2.1%**（for + 複数 if-else → while 1条件、branch divergence #1 を攻略） 🔥🔥🔥 | ✅ 完了 |
+| **三項演算子完全削除** | **+0.3%**（_ModInv の i==0 条件をループ外に抽出、コード全体から三項演算子消滅） 🔥 | ✅ 完了 |
+| **ブランチレス prefix matching** | **+1.3%**（32 prefix 時、if+break → matched \|= 累積、分岐命令削除） 🔥 | ✅ 完了 |
 
 #### エンドモルフィズムの仕組み
 

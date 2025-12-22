@@ -1,8 +1,8 @@
 # mocnpub タスクリスト 📋
 
 **作成日**: 2025-11-14
-**最終更新**: 2025-12-22
-**進捗**: Step 0〜25 完了！🎉 5.499B keys/sec 達成！🔥🔥🔥
+**最終更新**: 2025-12-23
+**進捗**: Step 0〜28 完了！🎉 5.707B keys/sec 達成！🔥🔥🔥
 
 ---
 
@@ -37,6 +37,9 @@
 | Step 23 | _Add128/_Add512 で _ModSquare 最適化（+1.8%、32 prefix も 5B 突破！）| ✅ 完了 🔥🔥🔥 |
 | Step 24 | _Add128To/_PropagateCarry256 リファクタ（+0.2%、コード可読性向上）| ✅ 完了 🔥 |
 | Step 25 | ループ融合（Montgomery's Trick 累積積、+1.9%）| ✅ 完了 🔥🔥🔥 |
+| Step 26 | _ReduceOverflow インライン化（分岐削除、+1.7%）| ✅ 完了 🔥🔥🔥 |
+| Step 27 | _Reduce512 while ループ簡素化（+2.1%）| ✅ 完了 🔥🔥🔥 |
+| Step 28 | 三項演算子完全削除 + ブランチレス prefix matching（32 prefix +1.3%）| ✅ 完了 🔥 |
 
 ---
 
@@ -81,11 +84,12 @@
 | GPU + _Add128To/_PropagateCarry256 リファクタ | 5.395B keys/sec | 77,071x |
 | GPU + ループ融合（Montgomery's Trick 累積積） | 5.499B keys/sec | 78,557x |
 | GPU + _ReduceOverflow インライン化（分岐削除） | 5.590B keys/sec | 79,857x |
-| **GPU + _Reduce512 while ループ簡素化** | **5.707B keys/sec** | **81,529x** 🔥 |
+| GPU + _Reduce512 while ループ簡素化 | 5.707B keys/sec | 81,529x |
+| **GPU + 三項演算子完全削除 + ブランチレス prefix matching** | **5.706B keys/sec** | **81,514x** 🔥 |
 
 **8文字 prefix が約 4 分で見つかる！** 🎉
 **CPU 使用率が 100% → 1% に削減！電力消費大幅削減！** 💡
-**32 prefix 時：5.386B keys/sec** 💪
+**32 prefix 時：5.457B keys/sec**（+1.3%）💪
 
 ---
 
