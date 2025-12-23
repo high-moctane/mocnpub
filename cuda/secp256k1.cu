@@ -826,7 +826,7 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
         uint64_t p[4] = {P0, P123, P123, P123};
         uint64_t borrow64;
         _Sub256(temp, p, temp, &borrow64);
-        temp[4] -= !!borrow64;
+        temp[4] -= borrow64;
     }
 
     // Copy result
