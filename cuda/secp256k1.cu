@@ -1039,62 +1039,6 @@ __device__ void _ModInv(const uint64_t a[4], uint64_t result[4])
 // ============================================================================
 
 /**
- * Point Doubling in Jacobian coordinates: (X1, Y1, Z1) -> 2*(X1, Y1, Z1)
- *
- * Algorithm (secp256k1 has a=0, which simplifies M calculation):
- *   S = 4 * X1 * Y1^2
- *   M = 3 * X1^2
- *   X3 = M^2 - 2*S
- *   Y3 = M * (S - X3) - 8 * Y1^4
- *   Z3 = 2 * Y1 * Z1
- *
- * Cost: 3M + 4S (3 multiplications, 4 squarings)
- */
-__device__ void _PointDouble(
-    const uint64_t X1[4], const uint64_t Y1[4], const uint64_t Z1[4],
-    uint64_t X3[4], uint64_t Y3[4], uint64_t Z3[4]
-)
-{
-    uint64_t Y1_squared[4], Y1_fourth[4];
-    uint64_t S[4], M[4], M_squared[4];
-    uint64_t temp[4], temp2[4];
-
-    // Y1_squared = Y1^2
-    _ModSquare(Y1, Y1_squared);
-
-    // Y1_fourth = Y1^4 = (Y1^2)^2
-    _ModSquare(Y1_squared, Y1_fourth);
-
-    // S = 4 * X1 * Y1^2
-    _ModMult(X1, Y1_squared, temp);      // temp = X1 * Y1^2
-    _ModAdd(temp, temp, temp2);          // temp2 = 2 * X1 * Y1^2
-    _ModAdd(temp2, temp2, S);            // S = 4 * X1 * Y1^2
-
-    // M = 3 * X1^2 (secp256k1 has a=0)
-    _ModSquare(X1, temp);                // temp = X1^2
-    _ModAdd(temp, temp, temp2);          // temp2 = 2 * X1^2
-    _ModAdd(temp2, temp, M);             // M = 3 * X1^2
-
-    // X3 = M^2 - 2*S
-    _ModSquare(M, M_squared);            // M_squared = M^2
-    _ModAdd(S, S, temp);                 // temp = 2*S
-    _ModSub(M_squared, temp, X3);        // X3 = M^2 - 2*S
-
-    // Y3 = M * (S - X3) - 8 * Y1^4
-    _ModSub(S, X3, temp);                // temp = S - X3
-    _ModMult(M, temp, temp2);            // temp2 = M * (S - X3)
-    // 8 * Y1^4 = 2 * (2 * (2 * Y1^4))
-    _ModAdd(Y1_fourth, Y1_fourth, temp); // temp = 2 * Y1^4
-    _ModAdd(temp, temp, temp);           // temp = 4 * Y1^4
-    _ModAdd(temp, temp, temp);           // temp = 8 * Y1^4
-    _ModSub(temp2, temp, Y3);            // Y3 = M * (S - X3) - 8 * Y1^4
-
-    // Z3 = 2 * Y1 * Z1
-    _ModMult(Y1, Z1, temp);              // temp = Y1 * Z1
-    _ModAdd(temp, temp, Z3);             // Z3 = 2 * Y1 * Z1
-}
-
-/**
  * Mixed Point Addition: (X1, Y1, Z1) + (X2, Y2, 1) where Z2 = 1 (Affine point)
  *
  * Optimized for adding an Affine point (Z=1) to a Jacobian point.
@@ -1368,48 +1312,6 @@ extern "C" __global__ void test_mod_square(
     // Store result
     for (int i = 0; i < 4; i++) {
         output[idx * 4 + i] = result[i];
-    }
-}
-
-/**
- * Test kernel: Point Doubling
- * Input: Point in Jacobian coordinates (X, Y, Z)
- * Output: 2*Point in Affine coordinates (x, y)
- */
-extern "C" __global__ void test_point_double(
-    const uint64_t* input_X,   // [4] Jacobian X coordinate
-    const uint64_t* input_Y,   // [4] Jacobian Y coordinate
-    const uint64_t* input_Z,   // [4] Jacobian Z coordinate
-    uint64_t* output_x,        // [4] Affine x coordinate
-    uint64_t* output_y         // [4] Affine y coordinate
-)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Only process first thread (simple test)
-    if (idx != 0) return;
-
-    uint64_t X1[4], Y1[4], Z1[4];
-    uint64_t X3[4], Y3[4], Z3[4];
-    uint64_t x[4], y[4];
-
-    // Load input point
-    for (int i = 0; i < 4; i++) {
-        X1[i] = input_X[i];
-        Y1[i] = input_Y[i];
-        Z1[i] = input_Z[i];
-    }
-
-    // Perform point doubling (Jacobian)
-    _PointDouble(X1, Y1, Z1, X3, Y3, Z3);
-
-    // Convert to Affine coordinates
-    _JacobianToAffine(X3, Y3, Z3, x, y);
-
-    // Store result
-    for (int i = 0; i < 4; i++) {
-        output_x[i] = x[i];
-        output_y[i] = y[i];
     }
 }
 

@@ -369,74 +369,6 @@ pub fn test_mod_square_gpu(
     Ok(result)
 }
 
-/// Test point doubling on GPU
-///
-/// This function tests the _PointDouble function by doubling a point on the secp256k1 curve
-/// Input: Point in Affine coordinates (x, y)
-/// Output: 2*Point in Affine coordinates (x, y)
-#[cfg(test)]
-#[allow(non_snake_case)]
-pub fn test_point_double_gpu(
-    ctx: &Arc<CudaContext>,
-    x: &[u64; 4],
-    y: &[u64; 4],
-) -> Result<([u64; 4], [u64; 4]), Box<dyn std::error::Error>> {
-    // Get default stream
-    let stream = ctx.default_stream();
-
-    // Load PTX module
-    let ptx_code = include_str!(concat!(env!("OUT_DIR"), "/secp256k1.ptx"));
-    let module = ctx.load_module(Ptx::from_src(ptx_code))?;
-    let kernel = module.load_function("test_point_double")?;
-
-    // Convert Affine to Jacobian: (x, y) -> (x, y, 1)
-    let input_X: Vec<u64> = x.to_vec();
-    let input_Y: Vec<u64> = y.to_vec();
-    let input_Z: Vec<u64> = vec![1, 0, 0, 0];
-
-    // Allocate device memory
-    let mut X_dev = stream.alloc_zeros::<u64>(4)?;
-    let mut Y_dev = stream.alloc_zeros::<u64>(4)?;
-    let mut Z_dev = stream.alloc_zeros::<u64>(4)?;
-    let mut output_x_dev = stream.alloc_zeros::<u64>(4)?;
-    let mut output_y_dev = stream.alloc_zeros::<u64>(4)?;
-
-    // Copy input data to device
-    stream.memcpy_htod(&input_X, &mut X_dev)?;
-    stream.memcpy_htod(&input_Y, &mut Y_dev)?;
-    stream.memcpy_htod(&input_Z, &mut Z_dev)?;
-
-    // Launch configuration: 1 block, 1 thread (for single test)
-    let config = LaunchConfig {
-        grid_dim: (1, 1, 1),
-        block_dim: (1, 1, 1),
-        shared_mem_bytes: 0,
-    };
-
-    // Launch kernel
-    let mut builder = stream.launch_builder(&kernel);
-    builder.arg(&mut X_dev);
-    builder.arg(&mut Y_dev);
-    builder.arg(&mut Z_dev);
-    builder.arg(&mut output_x_dev);
-    builder.arg(&mut output_y_dev);
-    unsafe {
-        builder.launch(config)?;
-    }
-
-    // Copy result back to host
-    let result_x_vec = stream.clone_dtoh(&output_x_dev)?;
-    let result_y_vec = stream.clone_dtoh(&output_y_dev)?;
-
-    // Convert to fixed-size arrays
-    let mut result_x = [0u64; 4];
-    let mut result_y = [0u64; 4];
-    result_x.copy_from_slice(&result_x_vec);
-    result_y.copy_from_slice(&result_y_vec);
-
-    Ok((result_x, result_y))
-}
-
 /// Match result from GPU prefix matching
 #[derive(Debug, Clone)]
 pub struct GpuMatch {
@@ -1129,52 +1061,6 @@ mod tests {
             result, expected,
             "Step 254 squared should match Python simulation"
         );
-    }
-
-    #[test]
-    fn test_gpu_point_double() {
-        // Initialize GPU
-        let ctx = init_gpu().expect("Failed to initialize GPU");
-
-        // Test case: 2G (where G is the secp256k1 generator point)
-        // G = (Gx, Gy)
-        // Gx = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
-        let Gx = [
-            0x59F2815B16F81798u64,
-            0x029BFCDB2DCE28D9u64,
-            0x55A06295CE870B07u64,
-            0x79BE667EF9DCBBACu64,
-        ];
-        // Gy = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8
-        let Gy = [
-            0x9C47D08FFB10D4B8u64,
-            0xFD17B448A6855419u64,
-            0x5DA4FBFC0E1108A8u64,
-            0x483ADA7726A3C465u64,
-        ];
-
-        let (result_x, result_y) =
-            test_point_double_gpu(&ctx, &Gx, &Gy).expect("GPU point doubling failed");
-
-        // Expected: 2G
-        // 2Gx = 0xC6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
-        let expected_2Gx = [
-            0xABAC09B95C709EE5u64,
-            0x5C778E4B8CEF3CA7u64,
-            0x3045406E95C07CD8u64,
-            0xC6047F9441ED7D6Du64,
-        ];
-        // 2Gy = 0x1AE168FEA63DC339A3C58419466CEAEEF7F632653266D0E1236431A950CFE52A
-        let expected_2Gy = [
-            0x236431A950CFE52Au64,
-            0xF7F632653266D0E1u64,
-            0xA3C58419466CEAEEu64,
-            0x1AE168FEA63DC339u64,
-        ];
-
-        // Check result
-        assert_eq!(result_x, expected_2Gx, "2G x-coordinate mismatch");
-        assert_eq!(result_y, expected_2Gy, "2G y-coordinate mismatch");
     }
 
     #[test]
