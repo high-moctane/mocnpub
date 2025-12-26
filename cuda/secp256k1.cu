@@ -1076,30 +1076,31 @@ __device__ void _PointMultByIndex(
     // Z^2 = 1 (since Z = 1)
     Rz_squared[0] = 1; Rz_squared[1] = 0; Rz_squared[2] = 0; Rz_squared[3] = 0;
 
+    // If idx == 0, no additions needed, just return base_pubkey
+    if (idx == 0) {
+        return;
+    }
+
     // Add dG_table[bit] for each set bit in idx
-    // Use __ffs() to find the lowest set bit, then clear it with idx &= idx - 1
-    // This loops only popcount(idx) times instead of 24 times
-    while (idx != 0) {
-        int bit = __ffs(idx) - 1;  // __ffs returns 1-indexed position, so subtract 1
+    for (int bit = 0; bit < 24; bit++) {
+        if ((idx >> bit) & 1) {
+            // Load _dG_table[bit] from constant memory (Affine coordinates)
+            uint64_t dG_x[4], dG_y[4];
+            for (int i = 0; i < 4; i++) {
+                dG_x[i] = _dG_table[bit * 8 + i];
+                dG_y[i] = _dG_table[bit * 8 + 4 + i];
+            }
 
-        // Load _dG_table[bit] from constant memory (Affine coordinates)
-        uint64_t dG_x[4], dG_y[4];
-        for (int i = 0; i < 4; i++) {
-            dG_x[i] = _dG_table[bit * 8 + i];
-            dG_y[i] = _dG_table[bit * 8 + 4 + i];
+            // Add: R = R + dG_table[bit]
+            uint64_t tempX[4], tempY[4], tempZ[4], tempZ_squared[4];
+            _PointAddMixed(Rx, Ry, Rz, Rz_squared, dG_x, dG_y, tempX, tempY, tempZ, tempZ_squared);
+            for (int i = 0; i < 4; i++) {
+                Rx[i] = tempX[i];
+                Ry[i] = tempY[i];
+                Rz[i] = tempZ[i];
+                Rz_squared[i] = tempZ_squared[i];
+            }
         }
-
-        // Add: R = R + dG_table[bit]
-        uint64_t tempX[4], tempY[4], tempZ[4], tempZ_squared[4];
-        _PointAddMixed(Rx, Ry, Rz, Rz_squared, dG_x, dG_y, tempX, tempY, tempZ, tempZ_squared);
-        for (int i = 0; i < 4; i++) {
-            Rx[i] = tempX[i];
-            Ry[i] = tempY[i];
-            Rz[i] = tempZ[i];
-            Rz_squared[i] = tempZ_squared[i];
-        }
-
-        idx &= idx - 1;  // Clear the lowest set bit
     }
 }
 
