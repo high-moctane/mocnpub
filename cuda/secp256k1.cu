@@ -12,12 +12,10 @@
 
 // Prime p = 2^256 - 2^32 - 977
 // 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
-// Note: P1=P2=P3 are all 0xFFFFFFFFFFFFFFFF (special form used for optimization)
 #define P0 0xFFFFFFFEFFFFFC2FULL
 #define P1 0xFFFFFFFFFFFFFFFFULL
 #define P2 0xFFFFFFFFFFFFFFFFULL
 #define P3 0xFFFFFFFFFFFFFFFFULL
-#define P123 0xFFFFFFFFFFFFFFFFULL  // P1 = P2 = P3 (max uint64, special form)
 
 // Generator point G (x coordinate)
 // 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798
@@ -720,9 +718,9 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     // At most 2-3 iterations needed
     // temp >= p iff: temp[4] > 0, OR (temp[3..1] all == max_uint64 AND temp[0] >= P0)
     while ((temp[4] > 0) ||
-           (temp[3] == P123 && temp[2] == P123 && temp[1] == P123 && temp[0] >= P0)) {
+           (temp[3] == P3 && temp[2] == P2 && temp[1] == P1 && temp[0] >= P0)) {
         // Subtract p from temp using PTX borrow chain (single _Sub256 call)
-        uint64_t p[4] = {P0, P123, P123, P123};
+        uint64_t p[4] = {P0, P1, P2, P3};
         uint64_t borrow64;
         _Sub256(temp, p, temp, &borrow64);
         temp[4] -= borrow64;
@@ -1015,33 +1013,6 @@ __device__ void _PointAddMixed(
 }
 
 /**
- * Convert Jacobian coordinates to Affine coordinates
- * (X, Y, Z) -> (x, y) where x = X/Z^2, y = Y/Z^3
- */
-__device__ void _JacobianToAffine(
-    const uint64_t X[4], const uint64_t Y[4], const uint64_t Z[4],
-    uint64_t x[4], uint64_t y[4]
-)
-{
-    uint64_t Z_inv[4], Z_inv_squared[4], Z_inv_cubed[4];
-
-    // Z_inv = Z^(-1)
-    _ModInv(Z, Z_inv);
-
-    // Z_inv^2
-    _ModSquare(Z_inv, Z_inv_squared);
-
-    // Z_inv^3 = Z_inv^2 * Z_inv
-    _ModMult(Z_inv_squared, Z_inv, Z_inv_cubed);
-
-    // x = X * Z_inv^2
-    _ModMult(X, Z_inv_squared, x);
-
-    // y = Y * Z_inv^3
-    _ModMult(Y, Z_inv_cubed, y);
-}
-
-/**
  * Compute base_pubkey + idx * dG using precomputed dG table
  *
  * Instead of _PointMult(k, G) with 256 double-and-add operations,
@@ -1076,11 +1047,6 @@ __device__ void _PointMultByIndex(
     // Z^2 = 1 (since Z = 1)
     Rz_squared[0] = 1; Rz_squared[1] = 0; Rz_squared[2] = 0; Rz_squared[3] = 0;
 
-    // If idx == 0, no additions needed, just return base_pubkey
-    if (idx == 0) {
-        return;
-    }
-
     // Add dG_table[bit] for each set bit in idx
     for (int bit = 0; bit < 24; bit++) {
         if ((idx >> bit) & 1) {
@@ -1108,9 +1074,9 @@ __device__ void _PointMultByIndex(
 // Production Kernels
 // ============================================================================
 
-// MAX_KEYS_PER_THREAD: Can be specified via -D option at build time (default: 1500)
+// MAX_KEYS_PER_THREAD: Can be specified via -D option at build time (default: 1600)
 #ifndef MAX_KEYS_PER_THREAD
-#define MAX_KEYS_PER_THREAD 1500
+#define MAX_KEYS_PER_THREAD 1600
 #endif
 
 // ============================================================================
