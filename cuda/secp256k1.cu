@@ -1405,10 +1405,11 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
             uint32_t x_upper32 = (uint32_t)(x_coords[endo][3] >> 32);
 
             // Optimized path for single prefix (most common case)
-            // Simple 32-bit loop: branchless matching with OR accumulation
-            // Match probability is ~2^-32, so the loop almost always runs fully.
-            bool matched = false;
-            for (uint32_t p = 0; p < _num_prefixes; p++) {
+            // Simple 32-bit matching: first prefix inline, rest in loop
+            // When _num_prefixes == 1, the loop condition (1 < 1) is immediately false,
+            // allowing branch prediction to work effectively.
+            bool matched = ((x_upper32 & _masks[0]) == _patterns[0]);
+            for (uint32_t p = 1; p < _num_prefixes; p++) {
                 matched |= ((x_upper32 & _masks[p]) == _patterns[p]);
             }
 
