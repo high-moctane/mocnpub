@@ -717,10 +717,10 @@ __device__ void _Reduce512(const uint64_t in[8], uint64_t result[4])
     // Now reduce: while temp >= p, subtract p
     // At most 2-3 iterations needed
     // temp >= p iff: temp[4] > 0, OR (temp[3..1] all == max_uint64 AND temp[0] >= P0)
+    const uint64_t p[4] = {P0, P1, P2, P3};
     while ((temp[4] > 0) ||
            (temp[3] == P3 && temp[2] == P2 && temp[1] == P1 && temp[0] >= P0)) {
         // Subtract p from temp using PTX borrow chain (single _Sub256 call)
-        uint64_t p[4] = {P0, P1, P2, P3};
         uint64_t borrow64;
         _Sub256(temp, p, temp, &borrow64);
         temp[4] -= borrow64;
@@ -1057,15 +1057,8 @@ __device__ void _PointMultByIndex(
                 dG_y[i] = _dG_table[bit * 8 + 4 + i];
             }
 
-            // Add: R = R + dG_table[bit]
-            uint64_t tempX[4], tempY[4], tempZ[4], tempZ_squared[4];
-            _PointAddMixed(Rx, Ry, Rz, Rz_squared, dG_x, dG_y, tempX, tempY, tempZ, tempZ_squared);
-            for (int i = 0; i < 4; i++) {
-                Rx[i] = tempX[i];
-                Ry[i] = tempY[i];
-                Rz[i] = tempZ[i];
-                Rz_squared[i] = tempZ_squared[i];
-            }
+            // Add: R = R + dG_table[bit] (in-place update)
+            _PointAddMixed(Rx, Ry, Rz, Rz_squared, dG_x, dG_y, Rx, Ry, Rz, Rz_squared);
         }
     }
 }
@@ -1321,15 +1314,9 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     c_0[0] = Z_arr_0[0]; c_1[0] = Z_arr_1[0]; c_2[0] = Z_arr_2[0]; c_3[0] = Z_arr_3[0];
 
     for (uint32_t key_idx = 1; key_idx < n; key_idx++) {
-        uint64_t tempX[4], tempY[4], tempZ[4], tempZ_squared[4];
-        _PointAddMixed(Px, Py, Pz, Pz_squared, Gx, Gy, tempX, tempY, tempZ, tempZ_squared);
+        // P = P + G (in-place update)
+        _PointAddMixed(Px, Py, Pz, Pz_squared, Gx, Gy, Px, Py, Pz, Pz_squared);
 
-        for (int i = 0; i < 4; i++) {
-            Px[i] = tempX[i];
-            Py[i] = tempY[i];
-            Pz[i] = tempZ[i];
-            Pz_squared[i] = tempZ_squared[i];
-        }
         X_arr_0[key_idx] = Px[0]; X_arr_1[key_idx] = Px[1];
         X_arr_2[key_idx] = Px[2]; X_arr_3[key_idx] = Px[3];
         // Store Z^2 instead of Z
