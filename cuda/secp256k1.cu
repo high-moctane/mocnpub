@@ -948,24 +948,27 @@ __device__ void _ModInv(const uint64_t a[4], uint64_t result[4])
  *   - U1 = X1 (no multiplication)
  *   - S1 = Y1 (no multiplication)
  *   - Z3 = Z1 * H (no multiplication by Z2)
+ *   - Z3^2 = Z1^2 * H^2 (computed for Montgomery's Trick optimization)
  *
- * Cost: 8M + 3S (vs 12M + 4S for general point addition) - about 33% faster!
+ * Cost: 8M + 2S (vs 12M + 4S for general point addition)
+ * Note: Z1^2 is passed as input, Z3^2 is computed as output for reuse.
  */
 __device__ void _PointAddMixed(
     const uint64_t X1[4], const uint64_t Y1[4], const uint64_t Z1[4],  // Jacobian point
+    const uint64_t Z1_squared[4],                                      // Z1^2 (precomputed)
     const uint64_t X2[4], const uint64_t Y2[4],                        // Affine point (Z2=1)
-    uint64_t X3[4], uint64_t Y3[4], uint64_t Z3[4]
+    uint64_t X3[4], uint64_t Y3[4], uint64_t Z3[4],
+    uint64_t Z3_squared[4]                                             // Z3^2 = Z1^2 * H^2
 )
 {
-    uint64_t Z1_squared[4], Z1_cubed[4];
+    uint64_t Z1_cubed[4];
     uint64_t U2[4], S2[4];
     uint64_t H[4], H_squared[4], H_cubed[4];
     uint64_t R[4], R_squared[4];
     uint64_t X1_H2[4];  // X1 * H^2 (reused to avoid duplicate computation)
     uint64_t temp[4], temp2[4];
 
-    // Z1^2 and Z1^3
-    _ModSquare(Z1, Z1_squared);              // S1: Z1^2
+    // Z1^3 (Z1^2 is passed as input)
     _ModMult(Z1_squared, Z1, Z1_cubed);      // M1: Z1^3
 
     // U1 = X1 (since Z2^2 = 1, no multiplication needed)
@@ -1005,7 +1008,10 @@ __device__ void _PointAddMixed(
 
     // Z3 = Z1 * H (since Z2 = 1)
     _ModMult(Z1, H, Z3);                     // M8: Z3
-    // Total: 8M + 3S (optimized by reusing X1*H^2)
+
+    // Z3^2 = Z1^2 * H^2 (for Montgomery's Trick optimization)
+    _ModMult(Z1_squared, H_squared, Z3_squared);  // M9: Z3^2
+    // Total: 9M + 2S (8M + 2S core + 1M for Z3^2, saves 1S per call in chain)
 }
 
 /**
@@ -1051,12 +1057,14 @@ __device__ void _JacobianToAffine(
  * @param base_pubkey_x   X coordinate of base_pubkey (Affine)
  * @param base_pubkey_y   Y coordinate of base_pubkey (Affine)
  * @param Rx, Ry, Rz      Output: base_pubkey + idx * dG (Jacobian)
+ * @param Rz_squared      Output: Rz^2 (for Montgomery's Trick optimization)
  */
 __device__ void _PointMultByIndex(
     uint32_t idx,
     const uint64_t base_pubkey_x[4],
     const uint64_t base_pubkey_y[4],
-    uint64_t Rx[4], uint64_t Ry[4], uint64_t Rz[4]
+    uint64_t Rx[4], uint64_t Ry[4], uint64_t Rz[4],
+    uint64_t Rz_squared[4]
 )
 {
     // Initialize result to base_pubkey (Jacobian with Z = 1)
@@ -1065,6 +1073,8 @@ __device__ void _PointMultByIndex(
         Ry[i] = base_pubkey_y[i];
     }
     Rz[0] = 1; Rz[1] = 0; Rz[2] = 0; Rz[3] = 0;
+    // Z^2 = 1 (since Z = 1)
+    Rz_squared[0] = 1; Rz_squared[1] = 0; Rz_squared[2] = 0; Rz_squared[3] = 0;
 
     // If idx == 0, no additions needed, just return base_pubkey
     if (idx == 0) {
@@ -1082,12 +1092,13 @@ __device__ void _PointMultByIndex(
             }
 
             // Add: R = R + dG_table[bit]
-            uint64_t tempX[4], tempY[4], tempZ[4];
-            _PointAddMixed(Rx, Ry, Rz, dG_x, dG_y, tempX, tempY, tempZ);
+            uint64_t tempX[4], tempY[4], tempZ[4], tempZ_squared[4];
+            _PointAddMixed(Rx, Ry, Rz, Rz_squared, dG_x, dG_y, tempX, tempY, tempZ, tempZ_squared);
             for (int i = 0; i < 4; i++) {
                 Rx[i] = tempX[i];
                 Ry[i] = tempY[i];
                 Rz[i] = tempZ[i];
+                Rz_squared[i] = tempZ_squared[i];
             }
         }
     }
@@ -1327,39 +1338,43 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     // First point: P = base_pubkey + idx * dG (fast table lookup!)
     // Instead of _PointMult(k, G) with 256 double-and-add operations,
     // we use precomputed dG table and perform at most 24 point additions.
-    uint64_t Px[4], Py[4], Pz[4];
-    _PointMultByIndex(idx, base_pubkey_x, base_pubkey_y, Px, Py, Pz);
+    uint64_t Px[4], Py[4], Pz[4], Pz_squared[4];
+    _PointMultByIndex(idx, base_pubkey_x, base_pubkey_y, Px, Py, Pz, Pz_squared);
 
     X_arr_0[0] = Px[0]; X_arr_1[0] = Px[1]; X_arr_2[0] = Px[2]; X_arr_3[0] = Px[3];
-    Z_arr_0[0] = Pz[0]; Z_arr_1[0] = Pz[1]; Z_arr_2[0] = Pz[2]; Z_arr_3[0] = Pz[3];
+    // Store Z^2 instead of Z (for Montgomery's Trick optimization)
+    Z_arr_0[0] = Pz_squared[0]; Z_arr_1[0] = Pz_squared[1];
+    Z_arr_2[0] = Pz_squared[2]; Z_arr_3[0] = Pz_squared[3];
 
     // Generate subsequent points using P = P + G
-    // Also compute cumulative products c[i] for Montgomery's Trick (loop fusion)
+    // Also compute cumulative products c[i] = c[i-1] * Z[i]^2 for Montgomery's Trick
     const uint64_t Gx[4] = {GX0, GX1, GX2, GX3};
     const uint64_t Gy[4] = {GY0, GY1, GY2, GY3};
 
-    // Initialize c[0] = Z_arr[0]
+    // Initialize c[0] = Z^2[0] (cumulative product of Z^2 values)
     c_0[0] = Z_arr_0[0]; c_1[0] = Z_arr_1[0]; c_2[0] = Z_arr_2[0]; c_3[0] = Z_arr_3[0];
 
     for (uint32_t key_idx = 1; key_idx < n; key_idx++) {
-        uint64_t tempX[4], tempY[4], tempZ[4];
-        _PointAddMixed(Px, Py, Pz, Gx, Gy, tempX, tempY, tempZ);
+        uint64_t tempX[4], tempY[4], tempZ[4], tempZ_squared[4];
+        _PointAddMixed(Px, Py, Pz, Pz_squared, Gx, Gy, tempX, tempY, tempZ, tempZ_squared);
 
         for (int i = 0; i < 4; i++) {
             Px[i] = tempX[i];
             Py[i] = tempY[i];
             Pz[i] = tempZ[i];
+            Pz_squared[i] = tempZ_squared[i];
         }
         X_arr_0[key_idx] = Px[0]; X_arr_1[key_idx] = Px[1];
         X_arr_2[key_idx] = Px[2]; X_arr_3[key_idx] = Px[3];
-        Z_arr_0[key_idx] = Pz[0]; Z_arr_1[key_idx] = Pz[1];
-        Z_arr_2[key_idx] = Pz[2]; Z_arr_3[key_idx] = Pz[3];
+        // Store Z^2 instead of Z
+        Z_arr_0[key_idx] = Pz_squared[0]; Z_arr_1[key_idx] = Pz_squared[1];
+        Z_arr_2[key_idx] = Pz_squared[2]; Z_arr_3[key_idx] = Pz_squared[3];
 
-        // Loop fusion: compute c[key_idx] = c[key_idx-1] * Z_arr[key_idx]
+        // Loop fusion: compute c[key_idx] = c[key_idx-1] * Z^2[key_idx]
         uint64_t c_prev[4] = {c_0[key_idx-1], c_1[key_idx-1], c_2[key_idx-1], c_3[key_idx-1]};
-        uint64_t Z_cur[4] = {Z_arr_0[key_idx], Z_arr_1[key_idx], Z_arr_2[key_idx], Z_arr_3[key_idx]};
+        uint64_t Z_sq_cur[4] = {Z_arr_0[key_idx], Z_arr_1[key_idx], Z_arr_2[key_idx], Z_arr_3[key_idx]};
         uint64_t c_result[4];
-        _ModMult(c_prev, Z_cur, c_result);
+        _ModMult(c_prev, Z_sq_cur, c_result);
         c_0[key_idx] = c_result[0]; c_1[key_idx] = c_result[1];
         c_2[key_idx] = c_result[2]; c_3[key_idx] = c_result[3];
     }
@@ -1374,17 +1389,18 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
     }
 
     // === Phase 3: Compute individual inverses and check prefix match ===
+    // Since c[i] = Z[0]^2 * Z[1]^2 * ... * Z[i]^2 (cumulative product of Z^2),
+    // we get (Z[i]^-1)^2 directly without needing to square!
     for (int32_t i = n - 1; i >= 0; i--) {
-        uint64_t Z_inv[4];
+        uint64_t Z_inv_squared[4];
         if (i > 0) {
             uint64_t c_prev[4] = {c_0[i-1], c_1[i-1], c_2[i-1], c_3[i-1]};
-            _ModMult(u, c_prev, Z_inv);
+            _ModMult(u, c_prev, Z_inv_squared);  // Direct (Z^-1)^2 !
         } else {
-            for (int j = 0; j < 4; j++) Z_inv[j] = u[j];
+            for (int j = 0; j < 4; j++) Z_inv_squared[j] = u[j];
         }
 
-        uint64_t Z_inv_squared[4];
-        _ModSquare(Z_inv, Z_inv_squared);
+        // No _ModSquare needed! Z_inv_squared is already (Z^-1)^2
 
         uint64_t x[4];
         uint64_t X_cur[4] = {X_arr_0[i], X_arr_1[i], X_arr_2[i], X_arr_3[i]};
@@ -1435,11 +1451,12 @@ extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential
             }
         }
 
-        // Update u for next iteration
+        // Update u for next iteration: u = u * Z[i]^2
+        // (Z_arr stores Z^2 values, not Z)
         if (i > 0) {
-            uint64_t Z_cur[4] = {Z_arr_0[i], Z_arr_1[i], Z_arr_2[i], Z_arr_3[i]};
+            uint64_t Z_sq_cur[4] = {Z_arr_0[i], Z_arr_1[i], Z_arr_2[i], Z_arr_3[i]};
             uint64_t temp[4];
-            _ModMult(u, Z_cur, temp);
+            _ModMult(u, Z_sq_cur, temp);
             for (int j = 0; j < 4; j++) {
                 u[j] = temp[j];
             }
