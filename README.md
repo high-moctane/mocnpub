@@ -133,10 +133,10 @@ export CUDA_PATH=/usr/local/cuda
 
 ### Out of memory
 
-Reduce batch size:
+Rebuild with smaller `MAX_KEYS_PER_THREAD`:
 
 ```bash
-./target/release/mocnpub-main mine --prefix m0ctane --batch-size 1000000
+MAX_KEYS_PER_THREAD=800 cargo build --release
 ```
 
 ### WSL Performance
