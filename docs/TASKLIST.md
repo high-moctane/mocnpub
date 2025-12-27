@@ -25,7 +25,7 @@ Preparing mocnpub for public release! 🌸
 
 | File | Role | Base | Status |
 |------|------|------|--------|
-| **JOURNEY.md** | Story of pair programming (emotional, fun to read) | mocnpub-journey.md | [ ] Not started |
+| **JOURNEY.md** | Story of pair programming (emotional, fun to read) | mocnpub-journey.md | [x] Complete |
 | **OPTIMIZATION.md** | Technical deep-dive (optimization techniques, perf analysis) | OPTIMIZATION.md | [ ] Not started |
 | **LEARNING.md** | Learning path (secp256k1, CUDA, PTX tutorials) | LEARNING.md | [ ] Not started |
 
@@ -70,12 +70,12 @@ Preparing mocnpub for public release! 🌸
 
 **Content**: The complete story from "What's CUDA?" to 82,857x speedup
 
-- [ ] Copy base file to docs/JOURNEY.md
-- [ ] Remove work log filename references
-- [ ] Review "User" / "Claude" mentions (keep natural)
-- [ ] Verify all code snippets are accurate
-- [ ] Add navigation links to other docs
-- [ ] Final read-through for tone
+- [x] Copy base file to docs/JOURNEY.md
+- [x] Remove work log filename references (none found - source was clean!)
+- [x] Review "User" / "Claude" mentions (keep natural)
+- [x] Verify all code snippets are accurate
+- [x] Add navigation links to other docs
+- [x] Final read-through for tone
 
 **Sections to preserve**:
 - Prologue, Act I-VI structure
