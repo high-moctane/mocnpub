@@ -430,9 +430,9 @@ fn mining_loop(
             }
         }
 
-        // Progress display (every batch worth of keys, regardless of num_miners)
+        // Progress display (every ~10 batches worth of keys, regardless of num_miners)
         let current_total = total_count.load(Ordering::Relaxed);
-        if current_total >= last_progress_count + batch_keys {
+        if current_total >= last_progress_count + batch_keys * 10 {
             last_progress_count = current_total;
             let elapsed_secs = start.elapsed().as_secs_f64();
             let keys_per_sec = current_total as f64 / elapsed_secs;
