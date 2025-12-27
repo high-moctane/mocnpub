@@ -414,11 +414,6 @@ __device__ void _Add512(uint64_t a[8], const uint64_t b[8])
  *
  * Uses PTX 32-bit carry chain for efficiency.
  * Useful for accumulating products in multiplication loops.
- *
- * TODO: Future optimization idea - when c is known to be 0 or 1,
- * we might use "add.cc.u32 0xFFFFFFFF, c" to set carry flag directly,
- * avoiding the need to split c into 32-bit parts.
- * This requires PTX "+r" constraint investigation.
  */
 __device__ uint32_t _Add64x3(uint64_t a, uint64_t b, uint64_t c, uint64_t* sum)
 {
@@ -455,12 +450,7 @@ __device__ uint32_t _Add64x3(uint64_t a, uint64_t b, uint64_t c, uint64_t* sum)
  * Add two 256-bit numbers (a + b)
  * Returns the result and carry
  *
- * [EXPERIMENTAL] PTX implementation using 32-bit carry chain instructions.
- * Uses add.cc/addc.cc for hardware carry propagation instead of
- * software carry detection (setp.lt + selp pattern).
- *
- * Trade-off: 64-bit <-> 32-bit conversion overhead vs. carry chain efficiency
- * Needs Windows benchmarking for accurate comparison.
+ * Uses PTX 32-bit carry chain (add.cc/addc.cc) for efficiency.
  */
 __device__ void _Add256(const uint64_t a[4], const uint64_t b[4], uint64_t result[4], uint64_t* carry)
 {
@@ -519,8 +509,7 @@ __device__ void _Add256(const uint64_t a[4], const uint64_t b[4], uint64_t resul
  * Subtract two 256-bit numbers (a - b)
  * Returns the result and borrow (1 if a < b, 0 otherwise)
  *
- * [EXPERIMENTAL] PTX implementation using 32-bit borrow chain instructions.
- * Uses sub.cc/subc.cc for hardware borrow propagation.
+ * Uses PTX 32-bit borrow chain (sub.cc/subc.cc) for efficiency.
  */
 __device__ void _Sub256(const uint64_t a[4], const uint64_t b[4], uint64_t result[4], uint64_t* borrow_out)
 {
@@ -948,8 +937,9 @@ __device__ void _ModInv(const uint64_t a[4], uint64_t result[4])
  *   - Z3 = Z1 * H (no multiplication by Z2)
  *   - Z3^2 = Z1^2 * H^2 (computed for Montgomery's Trick optimization)
  *
- * Cost: 8M + 2S (vs 12M + 4S for general point addition)
- * Note: Z1^2 is passed as input, Z3^2 is computed as output for reuse.
+ * Cost: 9M + 2S (vs 12M + 4S for general point addition)
+ *   - 8M + 2S for core point addition
+ *   - +1M for computing Z3^2 (saves 1S per call in chain)
  */
 // In-place point addition: P1 = P1 + P2 (Mixed coordinates)
 // P1: Jacobian (X, Y, Z, Z_squared), P2: Affine (X2, Y2, Z2=1)
@@ -1018,7 +1008,6 @@ __device__ void _PointAddMixed(
         Z[i] = newZ[i];
         Z_squared[i] = newZ_squared[i];
     }
-    // Total: 9M + 2S (8M + 2S core + 1M for Z^2, saves 1S per call in chain)
 }
 
 /**
@@ -1230,32 +1219,23 @@ extern "C" __global__ void test_reduce512(
 // ============================================================================
 
 /**
- * Generate public keys using sequential key strategy
+ * Generate public keys using sequential key strategy with dG table optimization
  *
- * This kernel uses a single base_key and computes sequential secret keys:
- *   thread i computes keys: base_key + i * MAX_KEYS_PER_THREAD + 0, 1, 2, ...
+ * Each thread computes MAX_KEYS_PER_THREAD sequential keys:
+ *   secret_key[i] = base_key + thread_idx * MAX_KEYS_PER_THREAD + i
+ *   pubkey[i] = base_pubkey + thread_idx * dG + i * G
  *
- * Benefits:
- *   1. VRAM reduction: batch_size * 32 bytes -> 32 bytes (single key)
- *   2. Branch divergence reduction: sequential keys have similar upper bits
- *   3. Enables larger batch_size and MAX_KEYS_PER_THREAD
+ * Key optimizations:
+ *   1. dG table: Precomputed [dG, 2*dG, 4*dG, ..., 2^23*dG] in constant memory
+ *      - Initial pubkey via table lookup (~12 PointAdd) instead of PointMult (~384 ops)
+ *   2. Sequential keys: Only pass base_key (32 bytes) instead of all keys
+ *   3. Montgomery's Trick: Batch inverse for Jacobian -> Affine conversion
+ *   4. Endomorphism: Check 3 prefixes (P, β*P, β²*P) per pubkey computation
  *
- * Input:
- *   - base_key: single starting private key [4 limbs]
- *   - base_pubkey_x/y: precomputed base_key * G [4 limbs each]
- *   - (constant memory) _patterns: prefix bit patterns
- *   - (constant memory) _masks: prefix bit masks
- *   - (constant memory) _num_prefixes: number of prefixes to match
- *   - (constant memory) _num_threads: number of threads
- *   - (constant memory) _max_matches: maximum number of matches to store
- *
- * Output:
- *   - matched_base_idx: thread index of matched keys [max_matches]
- *   - matched_offset: key offset within thread [max_matches]
- *   - matched_pubkeys_x: x-coordinates of matched pubkeys [max_matches * 4]
- *   - matched_secret_keys: actual secret keys (base_key + global_offset + i) [max_matches * 4]
- *   - matched_endo_type: endomorphism type (0=original, 1=β, 2=β²) [max_matches]
- *   - match_count: number of matches found (atomic counter)
+ * Constant memory inputs:
+ *   - _dG_table[192]: dG table (24 entries × 8 uint64_t)
+ *   - _patterns[256], _masks[256]: prefix matching patterns
+ *   - _num_prefixes, _num_threads, _max_matches: runtime parameters
  */
 extern "C" __global__ void __launch_bounds__(128, 5) generate_pubkeys_sequential(
     const uint64_t* base_key,       // Single base key [4 limbs]
