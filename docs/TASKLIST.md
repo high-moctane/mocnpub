@@ -26,7 +26,7 @@ Preparing mocnpub for public release! 🌸
 | File | Role | Base | Status |
 |------|------|------|--------|
 | **JOURNEY.md** | Story of pair programming (emotional, fun to read) | mocnpub-journey.md | [x] Complete |
-| **OPTIMIZATION.md** | Technical deep-dive (optimization techniques, perf analysis) | OPTIMIZATION.md | [ ] Not started |
+| **OPTIMIZATION.md** | Technical deep-dive (optimization techniques, perf analysis) | OPTIMIZATION.md | [x] Complete |
 | **LEARNING.md** | Learning path (secp256k1, CUDA, PTX tutorials) | LEARNING.md | [ ] Not started |
 
 ### Priority 2: Root Files
@@ -91,12 +91,12 @@ Preparing mocnpub for public release! 🌸
 
 **Content**: Technical optimization journey, all 35 steps
 
-- [ ] Copy base file to docs/OPTIMIZATION.md
-- [ ] Remove work log filename references
-- [ ] Verify performance numbers are current (5.8B final)
-- [ ] Check all PTX code snippets
-- [ ] Add navigation links to other docs
-- [ ] Final technical review
+- [x] Copy base file to docs/OPTIMIZATION.md
+- [x] Remove work log filename references (none found - source was clean!)
+- [x] Verify performance numbers are current (5.8B final)
+- [x] Check all PTX code snippets
+- [x] Add navigation links to other docs
+- [x] Final technical review
 
 **Sections to preserve**:
 - Performance timeline table
