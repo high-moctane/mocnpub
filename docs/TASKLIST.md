@@ -33,7 +33,7 @@ Preparing mocnpub for public release! 🌸
 
 | File | Role | Status |
 |------|------|--------|
-| **README.md** | Project face, quick start, performance highlights | [ ] Major revision needed |
+| **README.md** | Project face, quick start, performance highlights | [x] Complete |
 | **CLAUDE.md** | Project guide (needs public-facing cleanup) | [ ] Cleanup needed |
 
 ### Priority 3: Cleanup
@@ -133,13 +133,15 @@ Preparing mocnpub for public release! 🌸
 
 **Content**: Project introduction, quick start, highlights
 
-- [ ] Write new project description
-- [ ] Update performance numbers (5.8B keys/sec, 82,857x)
-- [ ] Add installation instructions
-- [ ] Add usage examples
-- [ ] Add "Built with Claude Code 🌸" attribution
-- [ ] Link to docs/ for detailed documentation
-- [ ] Add license information
+- [x] Write new project description
+- [x] Update performance numbers (5.8B keys/sec, 82,857x)
+- [x] Add installation instructions
+- [x] Add usage examples
+- [x] Add "Built with Claude Code 🌸" attribution
+- [x] Link to docs/ for detailed documentation
+- [x] Add license information
+- [x] Update CLI to mine subcommand (remove --gpu flag)
+- [x] Remove CPU mode references
 
 **Structure**:
 ```
