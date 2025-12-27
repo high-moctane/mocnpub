@@ -28,7 +28,7 @@ const DG_TABLE_ENTRIES: usize = 24;
 /// where dG = MAX_KEYS_PER_THREAD * G
 ///
 /// Returns a flat array of 24 * 8 = 192 u64 values
-/// Each entry is (X[4], Y[4]) in little-endian limbs
+/// Each entry is (`X[4]`, `Y[4]`) in little-endian limbs
 pub fn compute_dg_table() -> Vec<u64> {
     let secp = Secp256k1::new();
     let max_keys = get_max_keys_per_thread() as u64;
@@ -60,7 +60,7 @@ pub fn compute_dg_table() -> Vec<u64> {
 
 /// Compute base_pubkey = base_key * G
 ///
-/// Returns (X[4], Y[4]) in little-endian limbs
+/// Returns (`X[4]`, `Y[4]`) in little-endian limbs
 pub fn compute_base_pubkey(base_key: &[u64; 4]) -> ([u64; 4], [u64; 4]) {
     let secp = Secp256k1::new();
 

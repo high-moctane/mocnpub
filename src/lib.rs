@@ -14,8 +14,8 @@ pub mod gpu;
 /// Convert byte array (32 bytes, big-endian) to [u64; 4] (little-endian limbs)
 ///
 /// Used when passing private keys to GPU
-/// - Input: big-endian byte array (byte[0] is the most significant byte)
-/// - Output: little-endian limbs (limb[0] is the least significant 64 bits)
+/// - Input: big-endian byte array (`byte[0]` is the most significant byte)
+/// - Output: little-endian limbs (`limb[0]` is the least significant 64 bits)
 pub fn bytes_to_u64x4(bytes: &[u8; 32]) -> [u64; 4] {
     let mut result = [0u64; 4];
     // byte[24..32] → limb[0] (least significant)
@@ -41,8 +41,8 @@ pub fn bytes_to_u64x4(bytes: &[u8; 32]) -> [u64; 4] {
 /// Convert [u64; 4] (little-endian limbs) to byte array (32 bytes, big-endian)
 ///
 /// Used when converting public keys returned from GPU to npub
-/// - Input: little-endian limbs (limb[0] is the least significant 64 bits)
-/// - Output: big-endian byte array (byte[0] is the most significant byte)
+/// - Input: little-endian limbs (`limb[0]` is the least significant 64 bits)
+/// - Output: big-endian byte array (`byte[0]` is the most significant byte)
 pub fn u64x4_to_bytes(value: &[u64; 4]) -> [u8; 32] {
     let mut result = [0u8; 32];
     // limb[3] (most significant) → byte[0..8]
@@ -163,7 +163,7 @@ pub fn prefixes_to_bits(prefixes: &[String]) -> Vec<(u64, u64, u32)> {
 /// Since offset is u32, only addition to least significant limb and carry propagation needed.
 ///
 /// # Arguments
-/// * `base` - 256-bit value (little-endian limbs: base[0] is least significant)
+/// * `base` - 256-bit value (little-endian limbs: `base[0]` is least significant)
 /// * `offset` - Value to add (max u32::MAX)
 ///
 /// # Returns
