@@ -2,7 +2,7 @@
 
 **A comprehensive record of optimizations, experiments, and learnings from CPU to GPU**
 
-Final Performance: **5.8B keys/sec** (82,857x faster than CPU)
+Final Performance: **5.9B keys/sec** (84,935x faster than CPU)
 
 ---
 
@@ -30,7 +30,8 @@ Final Performance: **5.8B keys/sec** (82,857x faster than CPU)
 | 2025-12-22 | Loop Fusion | 5.50B keys/sec | 78,571x | +1.9% |
 | 2025-12-22 | Fine-grained Optimizations | 5.71B keys/sec | 81,571x | +3.8% |
 | 2025-12-23 | Local Array SoA | 5.77B keys/sec | 82,429x | +1.1% |
-| 2025-12-26 | Z² Cumulative Product | **5.80B keys/sec** | **82,857x** | +0.96% |
+| 2025-12-26 | Z² Cumulative Product | 5.80B keys/sec | 82,857x | +0.96% |
+| 2025-12-29 | _ModSquare for newZ² | **5.94B keys/sec** | **84,935x** | +2.5% |
 
 **8-character prefix**: ~3.5 minutes (vs 3+ days on CPU)
 
@@ -821,9 +822,9 @@ _PointAddMixed(Rx, Ry, Rz, Rz_squared, dG_x, dG_y);
 ### Step 35: Comment Review (2025-12-27)
 
 **Development artifacts cleanup**:
-- `[EXPERIMENTAL]` markers removed (5.8B achieved!)
+- `[EXPERIMENTAL]` markers removed (5.9B achieved!)
 - Obsolete TODOs deleted (carry flag hack not used)
-- Cost calculations corrected (`_PointAddMixed`: 9M + 2S)
+- Cost calculations corrected (`_PointAddMixed`: 8M + 3S)
 - docstrings updated (dG table strategy)
 
 **Code quality**: -39 lines, +19 lines (net -20)
@@ -1127,7 +1128,7 @@ Every failed experiment taught us something:
 
 ### 8. Small optimizations accumulate 📈
 
-From 4.15B to 5.80B (+40%) through many small steps:
+From 4.15B to 5.94B (+43%) through many small steps:
 - Each optimization: 0.2% ~ 3.4%
 - "Stacking optimizations" compounds the effect
 - Every 0.1% matters at 5B+ keys/sec scale
@@ -1227,7 +1228,7 @@ From 4.15B to 5.80B (+40%) through many small steps:
 
 ---
 
-## Why 5.8B keys/sec (82,857x) is approaching the limit
+## Why 5.9B keys/sec (84,935x) is approaching the limit
 
 **Current architecture**:
 - ✅ Sequential keys + PointAdd (~300x lighter than PointMult)
@@ -1277,7 +1278,7 @@ From 4.15B to 5.80B (+40%) through many small steps:
    - Z² cumulative product insight
    - cvt instruction elimination hypothesis
 
-### From 70K to 5.8B (82,857x in 6 weeks)
+### From 70K to 5.9B (84,935x in 6 weeks)
 
 **November 14**: Hello World, CUDA? What's that?
 **November 22**: CPU version complete (70K keys/sec)
@@ -1296,7 +1297,7 @@ From 4.15B to 5.80B (+40%) through many small steps:
 **December 22**: Loop fusion + fine-tuning (5.71B, 81Kx)
 **December 23**: Local SoA (5.77B, 82Kx)
 **December 26**: Z² strategy (5.80B, 82Kx)
-**December 27**: Final polish (5.79B, stable)
+**December 29**: _ModSquare optimization (5.94B, 85Kx) 🔥
 **December 6**: **10-character prefix found!** 🎉
 **December 16**: **12-character prefix found!** 🎉🎉🎉
 
@@ -1474,7 +1475,7 @@ From 4.15B to 5.80B (+40%) through many small steps:
 
 **PTX Era** (Week 5-6):
 - Inline assembly, carry chains, loop unrolling
-- 4.15B → 5.80B (+39.8%) 🔥
+- 4.15B → 5.94B (+43.1%) 🔥
 
 ---
 
@@ -1492,7 +1493,7 @@ mocnpub represents a successful journey from complete beginner to advanced GPU o
 7. **Persistence**: Never giving up on difficult problems
 8. **Tool building**: mcp-lsp-bridge assisted development
 
-**The optimization continues**: Even at 5.8B keys/sec, new ideas keep emerging!
+**The optimization continues**: Even at 5.9B keys/sec, new ideas keep emerging!
 
 **From "What's CUDA?" to PTX/SASS-level optimization in 6 weeks** 🌸
 

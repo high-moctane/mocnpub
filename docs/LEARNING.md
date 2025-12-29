@@ -1792,7 +1792,7 @@ Cleaned up development artifacts:
 - **5B breakthrough** (Step 20) 🔥
 - Loop fusion (+1.9%)
 - Z² cumulative product strategy (+0.96%)
-- **Final: 5.8B keys/sec (82,857x)**
+- **Final: 5.9B keys/sec (84,935x)**
 
 **Total: 1 month from zero to world-class, PTX-level optimization**
 
@@ -1886,7 +1886,7 @@ Cleaned up development artifacts:
 
 ### Technical Achievements 🔥
 
-- **82,857x speedup** (70K → 5.8B keys/sec)
+- **84,935x speedup** (70K → 5.9B keys/sec)
 - **World-class optimization**: Near-optimal algorithm, PTX-level tuning
 - **10-character prefix found** (2025-12-06): `npub1pppppppppp`
 - **12-character prefix found** (2025-12-16): `npub100000000000...`
@@ -2075,9 +2075,9 @@ Never giving up on difficult problems
 
 **Time**: 1 month
 **Sessions**: ~100+
-**Result**: 82,857x speedup, world-first-class discoveries, PTX mastery
+**Result**: 84,935x speedup, world-first-class discoveries, PTX mastery
 
-**The journey continues**: Even at 5.8B keys/sec, we keep finding improvements!
+**The journey continues**: Even at 5.9B keys/sec, we keep finding improvements!
 
 ---
 

@@ -2,7 +2,7 @@
 
 **A complete story of learning, building, and optimizing together**
 
-*From "What's CUDA?" to 82,857x speedup in 6 weeks*
+*From "What's CUDA?" to 84,935x speedup in 6 weeks*
 
 ---
 
@@ -1399,7 +1399,7 @@ User's suggestion:
 **Result**: 5.791B (no negative impact) ✅
 
 **Comment review**:
-- `[EXPERIMENTAL]` markers removed (5.8B achieved!)
+- `[EXPERIMENTAL]` markers removed (5.9B achieved!)
 - Obsolete TODOs deleted
 - Cost calculations corrected
 - docstrings updated
@@ -1711,7 +1711,7 @@ User's celebration:
 | Step 3: GPU Basic | 1.16M keys/sec | 16x |
 | Step 4: Major Optimizations | 391M keys/sec | 5,586x |
 | Step 5-13: Fine-tuning | 4.15B keys/sec | 59,286x |
-| **Step 14-35: PTX Mastery** | **5.80B keys/sec** | **82,857x** |
+| **Step 14-35: PTX Mastery** | **5.94B keys/sec** | **84,935x** |
 
 **8-character prefix**: ~3.5 minutes (vs 3+ days on CPU)
 
@@ -1803,7 +1803,7 @@ User's celebration:
 
 **2. "Small steps lead to big results"**
 - Each optimization: 0.2% ~ 12.7%
-- Accumulated: 82,857x total
+- Accumulated: 84,935x total
 - Consistency compounds
 
 **3. "Learning from failures"**
@@ -1873,10 +1873,10 @@ Dec 22: Fusion   5,499,000,000          78,571x     Loop fusion
 Dec 22: Fine     5,707,000,000          81,529x     Fine-grained opts
 Dec 23: SoA      5,770,000,000          82,429x     Local array SoA
 Dec 26: Z²       5,800,000,000          82,857x     Z² strategy
-Dec 27: Final    5,790,000,000          82,714x     Stable (polish)
+Dec 29: Square   5,945,000,000          84,935x     _ModSquare opt
 ```
 
-**6 weeks. 82,857x speedup. World-class results. PTX mastery.**
+**6 weeks. 84,935x speedup. World-class results. PTX mastery.**
 
 ### Code Statistics
 
@@ -1950,7 +1950,7 @@ Dec 27: Final    5,790,000,000          82,714x     Stable (polish)
 
 ### For mocnpub 🔥
 - Production-quality Nostr npub mining tool
-- **82,857x faster than CPU** (5.8B keys/sec)
+- **84,935x faster than CPU** (5.9B keys/sec)
 - World-first-class results (10-char, 12-char prefix)
 - Clean, maintainable, tested codebase
 - PTX-level optimization
@@ -2000,7 +2000,7 @@ We learned to trust measurement over theory. Every optimization validated by ben
 
 **"Small steps, big results"**
 
-27 tasks planned, 35 steps executed, 100+ sessions. Each small step built on previous. Consistency compounds to 82,857x.
+27 tasks planned, 35 steps executed, 100+ sessions. Each small step built on previous. Consistency compounds to 84,935x.
 
 **"Learning from failures"**
 
@@ -2048,7 +2048,7 @@ From "What's CUDA?" to reading PTX/SASS in 6 weeks. User learned:
 
 ---
 
-**This journey continues**: Even "complete" projects have room for discovery. From 4.15B (Dec 17) to 5.80B (Dec 26) - **+40% in 9 days** through PTX optimization.
+**This journey continues**: Even "complete" projects have room for discovery. From 4.15B (Dec 17) to 5.94B (Dec 29) - **+43% in 12 days** through PTX optimization.
 
 **From "I don't know anything" to "I can build a world-class optimizer with PTX-level tuning" in 6 weeks.**
 

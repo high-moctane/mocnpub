@@ -15,7 +15,7 @@ This file provides project context for Claude Code to assist with development.
 - Achieve maximum performance using GPGPU (CUDA) 🚀
 
 **Final Results**:
-- **5.8B keys/sec** (**82,857x** faster than CPU) 🔥
+- **5.9B keys/sec** (**84,935x** faster than CPU) 🔥
 - 8-character prefix found in ~4 minutes
 
 ---
@@ -64,7 +64,7 @@ PTX is auto-compiled by `build.rs`.
 | Step 3 | GPU port | 1.16M keys/sec (16x) |
 | Step 4 | Consecutive keys + Montgomery | 391M keys/sec (5,586x) |
 | Step 5-13 | Parameter tuning | 4.15B keys/sec (59,286x) |
-| Step 14-35 | PTX optimization | **5.80B keys/sec (82,857x)** |
+| Step 14-35 | PTX optimization | **5.94B keys/sec (84,935x)** |
 
 ### Key Optimizations
 

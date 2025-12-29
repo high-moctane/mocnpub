@@ -87,7 +87,7 @@ Search for multiple prefixes at once (OR matching):
 
 Benchmarked on RTX 5070 Ti (16GB VRAM):
 
-**5.8 billion keys/sec** (82,857x faster than CPU baseline)
+**5.9 billion keys/sec** (84,935x faster than CPU baseline)
 
 ### Expected Search Time
 
