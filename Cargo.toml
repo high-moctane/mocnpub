@@ -11,7 +11,7 @@ cudarc = { version = "0.18.2", features = ["cuda-version-from-build-system"] }
 num-complex = "0.4"
 image = "0.25"
 secp256k1 = { version = "0.29", features = ["rand-std"] }
-rand = "0.9"
+rand = "0.10"
 bech32 = "0.11"
 hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
