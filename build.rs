@@ -93,6 +93,13 @@ fn compile_cu_to_ptx(
         "-lineinfo".to_string(),
     ];
 
+    // Workaround for glibc 2.42+ rsqrt conflict on NixOS
+    // glibc 2.42 declares rsqrt/rsqrtf (C23) which conflicts with CUDA's math_functions.h
+    // _GNU_SOURCE enables IEC_60559_FUNCS_EXT -> IEC_60559_FUNCS_EXT_C23 -> rsqrt declaration
+    if cfg!(target_os = "linux") {
+        args.push("-U_GNU_SOURCE".to_string());
+    }
+
     // Pass UTF-8 option to cl.exe on Windows
     if cfg!(target_os = "windows") {
         args.push("-Xcompiler".to_string());
