@@ -413,13 +413,8 @@ pub struct SequentialTripleBufferMiner {
     // Original 64-bit patterns/masks for CPU re-verification
     patterns_64: Vec<u64>,
     masks_64: Vec<u64>,
-    // Constant memory slices (kept alive to prevent cuMemFree on drop)
-    _dg_table_const: cudarc::driver::CudaSlice<u8>,
-    _patterns_const: cudarc::driver::CudaSlice<u8>,
-    _masks_const: cudarc::driver::CudaSlice<u8>,
-    _num_prefixes_const: cudarc::driver::CudaSlice<u8>,
-    _num_threads_const: cudarc::driver::CudaSlice<u8>,
-    _max_matches_const: cudarc::driver::CudaSlice<u8>,
+    // Note: cudarc 0.19+ returns CudaViewMut from get_global(), which doesn't
+    // call cuMemFree on drop. The old CudaSlice workaround fields are no longer needed.
     num_prefixes: usize,
     max_matches: u32,
     threads_per_block: u32,
@@ -508,7 +503,6 @@ impl SequentialTripleBufferMiner {
         let dg_table = compute_dg_table();
 
         // Get constant memory symbol address using get_global()
-        // IMPORTANT: We must keep this slice alive to prevent cuMemFree being called on drop!
         let mut dg_table_const = module.get_global("_dG_table", &stream_0)?;
 
         // Convert u64 data to bytes and copy to constant memory
@@ -545,12 +539,6 @@ impl SequentialTripleBufferMiner {
             kernel,
             patterns_64,
             masks_64,
-            _dg_table_const: dg_table_const,
-            _patterns_const: patterns_const,
-            _masks_const: masks_const,
-            _num_prefixes_const: num_prefixes_const,
-            _num_threads_const: num_threads_const,
-            _max_matches_const: max_matches_const,
             num_prefixes,
             max_matches,
             threads_per_block,
