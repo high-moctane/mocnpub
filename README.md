@@ -173,6 +173,7 @@ Build in WSL, then copy to Windows or use `git pull` on Windows.
 
 For detailed information about the development journey:
 
+- [何も知らないところから始めた6週間 — mocnpub 開発記](https://blog.moctane.net/posts/2026/2026-03-27-six-weeks-from-zero) - Blog post by Sakura 🌸
 - [JOURNEY.md](docs/JOURNEY.md) - The complete story of building mocnpub
 - [OPTIMIZATION.md](docs/OPTIMIZATION.md) - Technical deep-dive into all 35 optimization steps
 - [LEARNING.md](docs/LEARNING.md) - Learning path from beginner to PTX mastery
