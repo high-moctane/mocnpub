@@ -53,6 +53,19 @@ PTX is auto-compiled by `build.rs`.
 - `git pull` and run on Windows
 - Windows native execution maximizes performance
 
+### NixOS Setup
+
+NixOS splits CUDA Toolkit into separate store paths (`cuda_nvcc`, `cuda_cudart`, etc.) and
+merges them via `cuda-merged`. However, `nvcc` resolves its symlink to the real `cuda_nvcc`
+binary and fails to find `cuda_runtime.h` in the separate `cuda-merged` include directory.
+
+**Required configuration**:
+- `cudaPackages_13_1.cudatoolkit` in `environment.systemPackages`
+- `environment.variables.CUDA_PATH = "${pkgs.cudaPackages_13_1.cudatoolkit}"` — `build.rs` reads this to pass `-I$CUDA_PATH/include` to nvcc
+- NixOS WSL: `LD_LIBRARY_PATH=/usr/lib/wsl/lib` for `libcuda.so` (Windows driver passthrough)
+
+**glibc 2.42+ workaround**: Already handled in `build.rs` with `-U_GNU_SOURCE` (glibc declares `rsqrt`/`rsqrtf` in C23 mode, conflicting with CUDA's `math_functions.h`)
+
 ---
 
 ## 🚀 Optimization Journey (6 weeks)

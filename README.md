@@ -131,6 +131,31 @@ nvcc --version
 export CUDA_PATH=/usr/local/cuda
 ```
 
+### NixOS
+
+On NixOS, the CUDA Toolkit is split across multiple store paths. `nvcc` can't find
+`cuda_runtime.h` because it resolves symlinks and looks relative to its real binary path
+(`cuda_nvcc`), not the merged package (`cuda-merged`).
+
+**Fix**: Set `CUDA_PATH` to the cudatoolkit store path. `build.rs` will pass `-I$CUDA_PATH/include` to nvcc.
+
+```nix
+# configuration.nix
+environment.systemPackages = with pkgs; [
+  cudaPackages_13_1.cudatoolkit
+];
+
+# nvcc needs this to find cuda_runtime.h (NixOS symlink issue)
+environment.variables.CUDA_PATH = "${pkgs.cudaPackages_13_1.cudatoolkit}";
+```
+
+For NixOS WSL, also add the Windows driver library path:
+
+```fish
+# fish shellInit
+set -gx LD_LIBRARY_PATH /usr/lib/wsl/lib $LD_LIBRARY_PATH
+```
+
 ### Out of memory
 
 Rebuild with smaller `MAX_KEYS_PER_THREAD`:

@@ -93,6 +93,15 @@ fn compile_cu_to_ptx(
         "-lineinfo".to_string(),
     ];
 
+    // On NixOS, nvcc is a symlink from cuda-merged to cuda_nvcc, so it can't find
+    // cuda_runtime.h relative to its real binary path. Pass -I explicitly.
+    if let Ok(cuda_path) = env::var("CUDA_PATH") {
+        let include_dir = PathBuf::from(&cuda_path).join("include");
+        if include_dir.exists() {
+            args.push(format!("-I{}", include_dir.display()));
+        }
+    }
+
     // Workaround for glibc 2.42+ rsqrt conflict on NixOS
     // glibc 2.42 declares rsqrt/rsqrtf (C23) which conflicts with CUDA's math_functions.h
     // _GNU_SOURCE enables IEC_60559_FUNCS_EXT -> IEC_60559_FUNCS_EXT_C23 -> rsqrt declaration
