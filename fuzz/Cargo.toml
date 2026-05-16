@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-cudarc = { version = "0.19.4", features = ["cuda-version-from-build-system"] }
+cudarc = { version = "0.19.6", features = ["cuda-version-from-build-system"] }
 
 [dependencies.mocnpub-main]
 path = ".."
