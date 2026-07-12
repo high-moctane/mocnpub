@@ -7,8 +7,6 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "deps"
-    reviewers:
-      - high-moctane
     open-pull-requests-limit: 5
 
   # Rust dependencies (Cargo) - fuzz
@@ -18,8 +16,6 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "deps"
-    reviewers:
-      - high-moctane
     open-pull-requests-limit: 5
 
   # GitHub Actions
@@ -29,6 +25,4 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "ci"
-    reviewers:
-      - high-moctane
     open-pull-requests-limit: 5
