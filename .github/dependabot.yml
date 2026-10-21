@@ -5,6 +5,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Give the community a week to catch a compromised release first.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps"
     open-pull-requests-limit: 5
@@ -14,6 +17,8 @@ updates:
     directory: "/fuzz"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps"
     open-pull-requests-limit: 5
@@ -23,6 +28,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci"
     open-pull-requests-limit: 5
