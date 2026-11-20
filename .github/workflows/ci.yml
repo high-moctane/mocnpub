@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
         with:
-          cuda: '12.5.0'
+          cuda: '13.3.1'
           method: network
           sub-packages: '["nvcc"]'
       - run: |
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
       - uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
         with:
-          cuda: '12.5.0'
+          cuda: '13.3.1'
           method: network
           sub-packages: '["nvcc"]'
       - run: |
